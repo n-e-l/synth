@@ -10,26 +10,32 @@ use cpal::traits::StreamTrait;
 use log::info;
 use crate::app::cpal_wrapper::StreamFactory;
 
-struct AudioControls {
+struct AudioController {
     play: bool
+}
+
+impl AudioController {
+    fn func(&self, t: f32) -> (f32, f32) {
+        if !self.play {
+            return (0.0, 0.0);
+        }
+
+        let tau = 2.0 * std::f32::consts::PI;
+        let n = f32::sin(tau * 440.0 * t);
+        let m = n*f32::powf(1.0-t,3.0);
+        let a = (f32::sin(t*tau)/2.0-0.5)*m;
+        let b = (f32::sin(t*tau + tau*0.5)/2.0-0.5)*m;
+
+        (a, b)
+    }
 }
 
 struct AudioPlayer {
     stream: Stream,
 }
 
-fn audio_shader(t:f32) -> (f32, f32) {
-    let tau = 2.0 * std::f32::consts::PI;
-    let n = f32::sin(tau * 440.0 * t);
-    let m = n*f32::powf(1.0-t,3.0);
-    let a = (f32::sin(t*tau)/2.0-0.5)*m;
-    let b = (f32::sin(t*tau + tau*0.5)/2.0-0.5)*m;
-
-    (a, b)
-}
-
 impl AudioPlayer {
-    fn new(func: fn(f32)->(f32, f32)) -> Self {
+    fn new(controller: Arc<Mutex<AudioController>>) -> Self {
         let sf = StreamFactory::default_factory().unwrap();
 
         let sample_rate = sf.config().sample_rate.0;
@@ -38,7 +44,7 @@ impl AudioPlayer {
             (0..len / 2) // len is apparently left *and* right
                 .flat_map(|_| {
                     sample_clock = (sample_clock + 1) % sample_rate;
-                    let (l, r) = func(sample_clock as f32 / sample_rate as f32);
+                    let (l, r) = controller.lock().unwrap().func(sample_clock as f32 / sample_rate as f32);
                     vec![l, r]
                 })
                 .collect()
@@ -57,12 +63,15 @@ impl AudioPlayer {
 struct App
 {
     player: AudioPlayer,
+    controller: Arc<Mutex<AudioController>>,
 }
 
 impl GuiComponent for App {
     fn gui(&mut self, gui: &mut GuiHandler, ctx: &Context) {
+        let mut lock = self.controller.lock().unwrap();
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.label("Test");
+            ui.checkbox(&mut lock.play, "play");
         });
 
         // The gui isn't the correct call for this, but there's no other place right now
@@ -80,9 +89,13 @@ fn main() {
         .log_fps(false);
 
     cen::app::Cen::run(cen_conf, Box::new(move |ctx| {
-        let player = AudioPlayer::new(audio_shader);
+        let controller = Arc::new(Mutex::new(AudioController {
+            play: true
+        }));
+        let player = AudioPlayer::new(controller.clone());
         let app = App {
-            player
+            player,
+            controller
         };
 
         ComponentRegistry::new()
