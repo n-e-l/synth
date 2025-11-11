@@ -1,25 +1,27 @@
 pub mod app;
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 use cen::app::component::{Component, ComponentRegistry};
 use cen::app::gui::{GuiComponent, GuiHandler};
 use cen::egui;
 use cen::egui::{Context, Slider};
 use egui_plot::{Line, Plot, PlotPoints};
-use cpal::Stream;
+use cpal::{Stream, StreamInstant};
 use cpal::traits::StreamTrait;
 use log::info;
 use crate::app::cpal_wrapper::StreamFactory;
 
 struct AudioController {
-    play: bool,
-    frequency: f32
+    engine_start_time: SystemTime,
+    play_start_time: SystemTime,
+    frequency: f32,
 }
 
 impl AudioController {
-    fn func(&self, t: f32) -> (f32, f32) {
-        if !self.play {
-            return (0.0, 0.0);
+    fn func(&self, mut t: f32) -> (f32, f32) {
+        if t > 1.0 {
+            t = 0.0;
         }
 
         let tau = 2.0 * std::f32::consts::PI;
@@ -29,6 +31,12 @@ impl AudioController {
         let b = (f32::sin(t*tau + tau*0.5)/2.0-0.5)*m;
 
         (a, b)
+    }
+
+    // The audio of the entire engine
+    fn sample(&self, t: f32) -> (f32, f32) {
+        let offset = self.play_start_time.duration_since(self.engine_start_time).unwrap_or(Duration::new(0, 0)).as_secs_f32();
+        self.func(t - offset)
     }
 }
 
@@ -41,15 +49,19 @@ impl AudioPlayer {
         let sf = StreamFactory::default_factory().unwrap();
 
         let sample_rate = sf.config().sample_rate.0;
-        let mut sample_clock = 0;
+        let mut sample_index: u64 = 0;
         let routin = Box::new(move |len: usize| -> Vec<f32> {
-            (0..len / 2) // len is apparently left *and* right
-                .flat_map(|_| {
-                    sample_clock = (sample_clock + 1) % sample_rate;
-                    let (l, r) = controller.lock().unwrap().func(sample_clock as f32 / sample_rate as f32);
+
+            let lock = controller.lock().unwrap();
+            let data: Vec<_> = (0..len / 2) // len is apparently left *and* right
+                .flat_map(|i| {
+                    sample_index += 1;
+                    let (l, r) = lock.sample((sample_index as f64 / sample_rate as f64) as f32);
                     vec![l, r]
                 })
-                .collect()
+                .collect();
+
+            data
         });
 
         Self {
@@ -65,6 +77,7 @@ impl AudioPlayer {
 struct App
 {
     player: AudioPlayer,
+    start_time: SystemTime,
     controller: Arc<Mutex<AudioController>>,
 }
 
@@ -72,16 +85,20 @@ impl GuiComponent for App {
     fn gui(&mut self, gui: &mut GuiHandler, ctx: &Context) {
         let mut lock = self.controller.lock().unwrap();
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.label("Test");
-            ui.checkbox(&mut lock.play, "play");
+            if ui.button("play").clicked() {
+                lock.play_start_time = SystemTime::now() + Duration::new(0, 5000000);
+            }
             ui.add(Slider::new(&mut lock.frequency, 0.0..=1000.0));
 
             Plot::new("audio_plot")
                 .view_aspect(2.0)
                 .show(ui, |plot_ui| {
+                    let samples_per_second = 1000;
+                    let duration = 5.0;
+                    let total_samples = (duration * samples_per_second as f32) as i32;
                     // Convert audio samples to plot points
-                    let points = (0..1000)
-                        .map(|i| lock.func(i as f32 / 1000.0))
+                    let points = (0..total_samples)
+                        .map(|i| lock.func(duration * i as f32 / total_samples as f32))
                         .enumerate()
                         .map(|(i, sample)| [i as f64, sample.0 as f64])
                         .collect::<Vec<[f64; 2]>>();
@@ -107,11 +124,13 @@ fn main() {
 
     cen::app::Cen::run(cen_conf, Box::new(move |ctx| {
         let controller = Arc::new(Mutex::new(AudioController {
-            play: true,
+            engine_start_time: SystemTime::now(),
+            play_start_time: SystemTime::now(),
             frequency: 440.
         }));
         let player = AudioPlayer::new(controller.clone());
         let app = App {
+            start_time: SystemTime::now(),
             player,
             controller
         };
