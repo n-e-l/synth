@@ -1,0 +1,23 @@
+[package]
+name = "synth"
+version = "0.0.0"
+edition = "2021"
+authors = ["Lauda Carly <lauda@nel.re"]
+description = "Simple rust synthesizer"
+readme = "README.md"
+repository = "https://github.com/n-e-l/synth"
+license = "GPL-3.0-only"
+keywords = ["compute", "vulkan", "render", "engine", "synth"]
+categories = ["rendering::engine"]
+
+[dependencies]
+cen = { git = "https://github.com/n-e-l/cen", rev = "5c6ef24e760d79234321f4f334913b75fdb61957" }
+cpal = "0.13.4"
+glam = "0.28.0"
+log = "0.4.22"
+bytemuck = { version = "1.17.0", features = ["derive"] }
+rodio = "0.20.1"
+png = "0.17.16"
+egui_dock = "0.17.0"
+
+[dev-dependencies]
