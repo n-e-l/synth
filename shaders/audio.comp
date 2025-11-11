@@ -1,0 +1,31 @@
+#version 450
+
+layout ( local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
+
+layout( std430, binding = 0 ) buffer AudioBuffer {
+    float[] data;
+} audio;
+
+layout( push_constant ) uniform PushConstants
+{
+    float time;
+    int samples;
+    float amplitude;
+    float frequency;
+} constants;
+
+vec2 func(float t) {
+    float tau = 2.0 * 3.14169;
+    float n = sin( tau * constants.frequency * t );
+    float m = n * pow( 1.0 - t, 3.0 );
+    float a = ( sin( t * tau ) / 2.0 - 0.5 ) * m * constants.amplitude;
+    float b = ( sin( t * tau + tau * 0.5 ) / 2.0 - 0.5 ) * m * constants.amplitude;
+    return vec2(a, b);
+}
+
+void main()
+{
+    int i = int( gl_GlobalInvocationID.x );
+    if( i > constants.samples ) return;
+    audio.data[i] = func(constants.time + float( i ) / constants.samples).r;
+}
