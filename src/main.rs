@@ -20,7 +20,7 @@ struct AudioController {
 impl AudioController {
     fn func(&self, mut t: f32) -> (f32, f32) {
         if t > 1.0 {
-            t = 0.0;
+            return (0.0, 0.0);
         }
 
         let tau = 2.0 * std::f32::consts::PI;
