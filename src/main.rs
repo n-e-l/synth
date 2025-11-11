@@ -92,7 +92,7 @@ impl GuiComponent for App {
             Plot::new("audio_plot")
                 .view_aspect(2.0)
                 .show(ui, |plot_ui| {
-                    let samples_per_second = 1000;
+                    let samples_per_second = 3000;
                     let duration = 1.0;
                     let total_samples = (duration * samples_per_second as f32) as i32;
                     // Convert audio samples to plot points
@@ -103,7 +103,7 @@ impl GuiComponent for App {
                         .collect::<Vec<[f64; 2]>>();
                     let plot_points = PlotPoints::new(points);
 
-                    plot_ui.line(Line::new("func", plot_points));
+                    plot_ui.line(Line::new("audio", plot_points));
                 });
         });
 
