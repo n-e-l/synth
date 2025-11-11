@@ -1,15 +1,14 @@
 pub mod app;
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 use cen::app::component::{Component, ComponentRegistry};
 use cen::app::gui::{GuiComponent, GuiHandler};
 use cen::egui;
 use cen::egui::{Context, Slider};
 use egui_plot::{Line, Plot, PlotPoints};
-use cpal::{Stream, StreamInstant};
+use cpal::{Stream};
 use cpal::traits::StreamTrait;
-use log::info;
 use crate::app::cpal_wrapper::StreamFactory;
 
 struct AudioController {
@@ -54,7 +53,7 @@ impl AudioPlayer {
 
             let lock = controller.lock().unwrap();
             let data: Vec<_> = (0..len / 2) // len is apparently left *and* right
-                .flat_map(|i| {
+                .flat_map(|_| {
                     sample_index += 1;
                     let (l, r) = lock.sample((sample_index as f64 / sample_rate as f64) as f32);
                     vec![l, r]
@@ -81,7 +80,7 @@ struct App
 }
 
 impl GuiComponent for App {
-    fn gui(&mut self, gui: &mut GuiHandler, ctx: &Context) {
+    fn gui(&mut self, _: &mut GuiHandler, ctx: &Context) {
         let mut lock = self.controller.lock().unwrap();
         egui::CentralPanel::default().show(ctx, |ui| {
             if ui.button("play").clicked() {
@@ -121,7 +120,7 @@ fn main() {
         .resizable(true)
         .log_fps(false);
 
-    cen::app::Cen::run(cen_conf, Box::new(move |ctx| {
+    cen::app::Cen::run(cen_conf, Box::new(move |_| {
         let controller = Arc::new(Mutex::new(AudioController {
             engine_start_time: SystemTime::now(),
             play_start_time: SystemTime::now(),
