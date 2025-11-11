@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1](https://github.com/n-e-l/synth/compare/v0.0.0...v0.0.1) - 2025-11-11
+
+### Other
+
+- Fix build
+- Initial commit
+
 <<<<<<< Updated upstream
 ## [0.0.7](https://github.com/n-e-l/kiyo/compare/v0.0.6...v0.0.7) - 2025-10-04
 
