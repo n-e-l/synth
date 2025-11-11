@@ -1,12 +1,10 @@
 use std::sync::{Arc, Mutex};
 use cen::app::component::{Component, ComponentRegistry};
-use crate::app::StreamFactory;
-use crate::app::draw_orch::{DrawConfig};
 use crate::app::audio_orch::{AudioConfig};
 use crate::app::audio_orch::AudioConfig::{AudioFile, Program, None};
 use cpal::Stream;
 use cpal::traits::StreamTrait;
-use crate::app::{DrawOrchestrator};
+use crate::app::cpal_wrapper::StreamFactory;
 
 pub struct App {
     pub cen: cen::app::Cen,
@@ -73,6 +71,8 @@ impl App {
             if let Some(p) = &player {
                 p.play();
             }
+
+            ComponentRegistry::new()
         }));
     }
 }
