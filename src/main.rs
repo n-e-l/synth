@@ -77,7 +77,6 @@ impl AudioPlayer {
 struct App
 {
     player: AudioPlayer,
-    start_time: SystemTime,
     controller: Arc<Mutex<AudioController>>,
 }
 
@@ -94,13 +93,13 @@ impl GuiComponent for App {
                 .view_aspect(2.0)
                 .show(ui, |plot_ui| {
                     let samples_per_second = 1000;
-                    let duration = 5.0;
+                    let duration = 1.0;
                     let total_samples = (duration * samples_per_second as f32) as i32;
                     // Convert audio samples to plot points
                     let points = (0..total_samples)
                         .map(|i| lock.func(duration * i as f32 / total_samples as f32))
                         .enumerate()
-                        .map(|(i, sample)| [i as f64, sample.0 as f64])
+                        .map(|(i, sample)| [i as f64 / samples_per_second as f64, sample.0 as f64])
                         .collect::<Vec<[f64; 2]>>();
                     let plot_points = PlotPoints::new(points);
 
@@ -130,7 +129,6 @@ fn main() {
         }));
         let player = AudioPlayer::new(controller.clone());
         let app = App {
-            start_time: SystemTime::now(),
             player,
             controller
         };
