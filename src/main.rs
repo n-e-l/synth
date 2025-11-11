@@ -1,6 +1,10 @@
 pub mod app;
 
-use cen::app::component::ComponentRegistry;
+use std::sync::{Arc, Mutex};
+use cen::app::component::{Component, ComponentRegistry};
+use cen::app::gui::{GuiComponent, GuiHandler};
+use cen::egui;
+use cen::egui::Context;
 use cpal::Stream;
 use cpal::traits::StreamTrait;
 use crate::app::cpal_wrapper::StreamFactory;
@@ -36,6 +40,20 @@ impl AudioPlayer {
     }
 }
 
+struct App
+{
+
+}
+
+impl GuiComponent for App {
+    fn gui(&mut self, gui: &mut GuiHandler, ctx: &Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.label("Test");
+        });
+
+    }
+}
+
 fn main() {
     let cen_conf = cen::app::app::AppConfig::default()
         .width(1000)
@@ -52,7 +70,9 @@ fn main() {
         // if let Some(p) = &player {
         //     p.play();
         // }
+        let app = App {};
 
         ComponentRegistry::new()
+            .register(Component::Gui(Arc::new(Mutex::new(app))))
     }));
 }
