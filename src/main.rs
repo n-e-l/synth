@@ -35,6 +35,7 @@ struct AudioController {
     b: f32,
     c: f32,
     audio: Vec<AudioPacket>,
+    repeat: bool
 }
 
 impl AudioController {
@@ -96,7 +97,6 @@ struct App
 {
     player: AudioPlayer,
     controller: Arc<Mutex<AudioController>>,
-    samples_per_second: u32,
     pipeline: PipelineKey,
     buffer: Buffer,
     frame_index: u32,
@@ -107,8 +107,10 @@ struct App
 struct PushConstants {
     time: f32,
     samples: u32,
-    amplitude: f32,
-    frequency: f32
+    frequency: f32,
+    a: f32,
+    b: f32,
+    c: f32,
 }
 
 impl App {
@@ -118,6 +120,7 @@ impl App {
             a: 1.0,
             b: 0.0,
             c: 1.0,
+            repeat: false,
             engine_start_time: SystemTime::now(),
             play_start_time: SystemTime::now(),
             frequency: 440.,
@@ -158,7 +161,6 @@ impl App {
         );
 
         Self {
-            samples_per_second: 1000,
             player,
             controller,
             pipeline,
@@ -188,8 +190,10 @@ impl RenderComponent for App {
         let push_constants = PushConstants {
             time: 0.0,
             samples: BUFFER_SAMPLES as u32,
-            amplitude: lock.a,
-            frequency: lock.frequency
+            frequency: lock.frequency,
+            a: lock.a,
+            b: lock.b,
+            c: lock.c,
         };
         ctx.command_buffer.push_constants(
             &pipeline,
@@ -226,23 +230,11 @@ impl GuiComponent for App {
     fn gui(&mut self, _: &mut GuiHandler, ctx: &Context) {
         let mut lock = self.controller.lock().unwrap();
         egui::CentralPanel::default().show(ctx, |ui| {
-            if ui.button("play").clicked() {
-                lock.play_start_time = SystemTime::now() + Duration::new(0, 5000000);
-            }
-            ui.add(Slider::new(&mut lock.volume, 0.0..=1.0));
-            ui.add(Slider::new(&mut lock.frequency, 0.0..=1000.0));
-            ui.add(Slider::new(&mut lock.a, 0.0..=2.0));
-            ui.add(Slider::new(&mut lock.b, -1.0..=1.0));
-            ui.add(Slider::new(&mut lock.c, 0.0..=2.0));
-
-            ui.label("Samples per second");
-            ui.add(Slider::new(&mut self.samples_per_second, 100..=100000));
 
             if let Some(audio) = lock.audio.first() {
                 Plot::new("audio_plot")
                     .view_aspect(2.0)
                     .show(ui, |plot_ui| {
-                        // let total_samples = (duration * self.samples_per_second as f32) as i32;
                         let total_samples = BUFFER_SAMPLES;
                         // Convert audio samples to plot points
                         let points = (0..total_samples)
@@ -255,6 +247,21 @@ impl GuiComponent for App {
                         plot_ui.line(Line::new("audio", plot_points));
                     });
             }
+
+            if ui.button("play").clicked() {
+                lock.play_start_time = SystemTime::now() + Duration::new(0, 5000000);
+            }
+            ui.checkbox(&mut lock.repeat, "");
+            if lock.repeat && SystemTime::now().duration_since(lock.play_start_time).unwrap().as_secs_f64() > 0.9 {
+                lock.play_start_time = SystemTime::now() + Duration::new(0, 0);
+            }
+
+            ui.style_mut().spacing.slider_width = 190.;
+            ui.add(Slider::new(&mut lock.volume, 0.0..=1.0).text("Volume"));
+            ui.add(Slider::new(&mut lock.frequency, 0.0..=1000.0).text("Frequency"));
+            ui.add(Slider::new(&mut lock.a, 0.0..=2.0).text("a"));
+            ui.add(Slider::new(&mut lock.b, -1.0..=1.0).text("b"));
+            ui.add(Slider::new(&mut lock.c, 0.0..=2.0).text("c"));
         });
 
         // The gui isn't the correct call for this, but there's no other place right now

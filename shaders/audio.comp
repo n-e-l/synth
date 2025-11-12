@@ -10,17 +10,83 @@ layout( push_constant ) uniform PushConstants
 {
     float time;
     int samples;
-    float amplitude;
     float frequency;
+    float a;
+    float b;
+    float c;
 } constants;
 
+float supersaw(float frequency, float t, float detune, int voices) {
+    float sum = 0.0;
+    for (int i = 0; i < voices; i++) {
+        float offset = (float(i) / float(voices) - 0.5) * detune;
+        float freq = frequency * (1.0 + offset);
+        float phase = mod(freq * t, 1.0);
+        sum += 2.0 * phase - 1.0;
+    }
+    return sum / float(voices);
+}
+
+float TAU = 3.14159 * 2;
+float additive(float frequency, float t) {
+    float sum = 0.0;
+    // Harmonic, Amplitude pairs
+    sum += 1.0 * sin(TAU * frequency * 1.0 * t);
+    sum += 0.5 * sin(TAU * frequency * 2.0 * t);
+    sum += 0.25 * sin(TAU * frequency * 3.0 * t);
+    sum += 0.125 * sin(TAU * frequency * 4.0 * t);
+    return sum;
+}
+
+float morph(float frequency, float t, float mix) {
+    float phase = frequency * t;
+    float sine = sin(TAU * phase);
+    float saw = 2.0 * mod(phase, 1.0) - 1.0;
+    return sine * (1.0 - mix) + saw * mix;
+}
+
+float sawtooth(float frequency, float t) {
+    float phase = mod(frequency * t, 1.0);
+    return 2.0 * phase - 1.0;
+}
+// Stereo supersaw with phase offset
+vec2 supersaw_stereo(float frequency, float t, float detune, int voices, float stereo_width) {
+    float left = 0.0;
+    float right = 0.0;
+
+    for (int i = 0; i < voices; i++) {
+        float offset = (float(i) / float(voices) - 0.5) * detune;
+        float freq = frequency * (1.0 + offset);
+        float phase = mod(freq * t, 1.0);
+
+        // Pan each voice differently
+        float pan = float(i) / float(voices - 1); // 0 to 1
+        float l_amp = cos(pan * 1.5708) * stereo_width + (1.0 - stereo_width);
+        float r_amp = sin(pan * 1.5708) * stereo_width + (1.0 - stereo_width);
+
+        float saw = 2.0 * phase - 1.0;
+        left += saw * l_amp;
+        right += saw * r_amp;
+    }
+
+    return vec2(left, right) / float(voices);
+}
+
 vec2 func(float t) {
-    float tau = 2.0 * 3.14169;
-    float n = sin( tau * constants.frequency * t );
-    float m = n * pow( 1.0 - t, 3.0 );
-    float a = ( sin( t * tau ) / 2.0 - 0.5 ) * m * constants.amplitude;
-    float b = ( sin( t * tau + tau * 0.5 ) / 2.0 - 0.5 ) * m * constants.amplitude;
-    return vec2(a, b);
+
+    float audio = sawtooth(constants.frequency, t);
+//    audio = supersaw(constants.frequency, t, constants.a, int(constants.b * 9));
+    audio = additive(constants.frequency, t);
+    audio = morph(constants.frequency, t, constants.a);
+    return supersaw_stereo(constants.frequency, t, constants.a, int(9 * constants.b), constants.c);
+    return vec2(audio);
+
+//    float tau = 2.0 * 3.14169;
+//    float n = sin( tau * constants.frequency * t );
+//    float m = n * pow( 1.0 - t, 3.0 );
+//    float a = ( sin( t * tau * constants.a ) / 2.0 * constants.b- 0.5 ) * m;
+//    float b = ( sin( t * tau + tau * 0.5 ) / 2.0 - 0.5 ) * m;
+//    return vec2(a, b);
 }
 
 void main()
