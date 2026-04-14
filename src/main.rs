@@ -17,7 +17,7 @@ use cen::egui::{Context, Slider};
 use cen::gpu_allocator::MemoryLocation;
 use cen::graphics::pipeline_store::{PipelineConfig, PipelineKey};
 use cen::graphics::renderer::RenderComponent;
-use cen::vulkan::{Buffer, DescriptorSetLayout, PipelineErr};
+use cen::vulkan::{Buffer, DescriptorSetLayout};
 use egui_plot::{Line, Plot, PlotPoints};
 use egui::containers::menu;
 use cpal::{Stream};
@@ -40,7 +40,6 @@ struct AudioController {
     c: f32,
     d: f32,
     audio: Vec<AudioPacket>,
-    repeat: bool
 }
 
 impl AudioController {
@@ -181,7 +180,6 @@ impl App {
             b: 0.0,
             c: 1.0,
             d: 1.0,
-            repeat: false,
             engine_start_time: SystemTime::now(),
             play_start_time: SystemTime::now(),
             frequency: 440.,
