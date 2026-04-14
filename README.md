@@ -16,6 +16,6 @@ You might need to have [Vulkan SDK](https://vulkan.lunarg.com) installed.
 Then build and run `synth`:
 ```
 git clone https://github.com/n-e-l/synth.git
-cd kiyo
+cd synth
 cargo run
 ```
