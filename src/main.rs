@@ -174,7 +174,8 @@ impl App {
     }
 
     fn new(ctx: &mut InitContext) -> Self {
-        let code = fs::read_to_string("audio/snare.glsl").expect("Failed to read audio file");
+        let default_file = "audio/kick.glsl";
+        let code = fs::read_to_string(default_file).expect("Failed to read audio file");
 
         let controller = Arc::new(Mutex::new(AudioController {
             volume: 1.0,
@@ -239,7 +240,7 @@ impl App {
             code,
             shader_errors,
             compile: false,
-            file_path: Some("audio/kick.glsl".into())
+            file_path: Some(default_file.into())
         }
     }
 }

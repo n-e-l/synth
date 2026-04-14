@@ -69,7 +69,6 @@
 				export SHADERC_LIB_DIR="${pkgs.shaderc.lib}/lib"
 				export SHADERC_INCLUDE_DIR="${pkgs.shaderc.dev}/include"
 				export PKG_CONFIG_PATH="${pkgs.shaderc}/lib/pkgconfig:$PKG_CONFIG_PATH"
-
           '';
 
   		  PKG_CONFIG_PATH = "${pkgs.alsa-lib.dev}/lib/pkgconfig:${pkgs.jack2}/lib/pkgconfig";
