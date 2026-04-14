@@ -25,7 +25,9 @@ use cpal::traits::StreamTrait;
 use egui_code_editor::{CodeEditor, ColorTheme, Completer, Syntax};
 use crate::app::cpal_wrapper::StreamFactory;
 
+// Pretty low amount as I didn't optimize
 const BUFFER_SAMPLES: usize = 128 * 128;
+
 struct AudioPacket {
     data: [f32; BUFFER_SAMPLES]
 }
@@ -220,12 +222,11 @@ impl App {
             }
         };
 
-        let buffer_samples: u32 = 128 * 128;
         let buffer = Buffer::new(
             ctx.device,
             ctx.allocator,
             MemoryLocation::CpuToGpu,
-            size_of::<f32>() as DeviceSize * buffer_samples as u64,
+            size_of::<f32>() as DeviceSize * BUFFER_SAMPLES as u64,
             BufferUsageFlags::STORAGE_BUFFER
         );
 
@@ -420,7 +421,7 @@ fn main() {
         .vsync(true)
         .fullscreen(false)
         .resizable(true)
-        .log_fps(false);
+        .log_fps(true);
 
     cen::app::Cen::run(cen_conf, Box::new(move |ctx| {
         let app = Arc::new(Mutex::new(App::new(ctx)));
