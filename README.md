@@ -8,6 +8,8 @@ A simple glsl audio editor. This was a personal playground so don't judge the co
 - Open/save .glsl files
 - shader compilation with error log
 
+![preview](./preview.png)
+
 ## Building & running
 
 You might need to have [Vulkan SDK](https://vulkan.lunarg.com) installed.  
