@@ -15,7 +15,7 @@ cen = { git = "https://github.com/n-e-l/cen", rev = "241f224b9da41a2c0cf5e59b5f8
 cpal = "0.13.4"
 bytemuck = { version = "1.17.0", features = ["derive"] }
 egui_plot = "0.34.0"
-egui_code_editor = "0.2.19"
+egui_code_editor = "0.2.21"
 rfd = "0.17.2"
 
 [dev-dependencies]
