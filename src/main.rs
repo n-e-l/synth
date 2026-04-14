@@ -338,7 +338,7 @@ impl GuiComponent for App {
         let mut lock = self.controller.lock().unwrap();
         egui::SidePanel::left("scene_tree")
             .resizable(true)
-            .default_width(220.0)
+            .default_width(520.0)
             .min_width(80.0)
             .show(ctx, |ui| {
                 if let Some(audio) = lock.audio.first() {
@@ -415,8 +415,8 @@ impl GuiComponent for App {
 
 fn main() {
     let cen_conf = cen::app::app::AppConfig::default()
-        .width(1000)
-        .height(1000)
+        .width(1200)
+        .height(800)
         .vsync(true)
         .fullscreen(false)
         .resizable(true)
