@@ -1,5 +1,6 @@
 pub mod app;
 
+use lttb::{lttb, DataPoint};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -23,6 +24,9 @@ use egui::containers::menu;
 use cpal::{Stream};
 use cpal::traits::StreamTrait;
 use egui_code_editor::{CodeEditor, ColorTheme, Completer, Syntax};
+use ringbuf::consumer::Consumer;
+use ringbuf::producer::Producer;
+use ringbuf::traits::Split;
 use crate::app::cpal_wrapper::StreamFactory;
 
 // Pretty low amount as I didn't optimize
@@ -41,19 +45,18 @@ struct AudioController {
     b: f32,
     c: f32,
     d: f32,
-    audio: Vec<AudioPacket>,
+    audio: Option<AudioPacket>,
 }
 
 impl AudioController {
     fn get_sample(&self, i: u64) -> f32 {
-        let packet = i as usize / BUFFER_SAMPLES;
-        if packet >= self.audio.len() {
-            return 0.;
-            // panic!("Not enough packets! packet: {}, available: {}", packet, self.audio.len());
+        if let Some(audio) = &self.audio {
+
+            let index = i as usize % BUFFER_SAMPLES;
+            return audio.data[index]
         }
 
-        let index = i as usize % BUFFER_SAMPLES;
-        self.audio[packet].data[index]
+        0.
     }
 
     // The audio of the entire engine
@@ -67,30 +70,27 @@ impl AudioController {
 
 struct AudioPlayer {
     stream: Stream,
+    producer: ringbuf::HeapProd<f32>
 }
 
 impl AudioPlayer {
-    fn new(controller: Arc<Mutex<AudioController>>) -> Self {
+    fn new() -> Self {
         let sf = StreamFactory::default_factory().unwrap();
+
+        let (mut producer, mut consumer) = ringbuf::HeapRb::<f32>::new(BUFFER_SAMPLES * 4).split();
 
         let sample_rate = sf.config().sample_rate.0;
         let mut sample_index: u64 = 0;
         let routin = Box::new(move |len: usize| -> Vec<f32> {
 
-            let lock = controller.lock().unwrap();
-            let data: Vec<_> = (0..len / 2) // len is apparently left *and* right
-                .flat_map(|_| {
-                    sample_index += 1;
-                    let (l, r) = lock.sample((sample_index as f64 / sample_rate as f64) as f32);
-                    vec![l, r]
-                })
-                .collect();
-
-            data
+            let mut out = vec![0.0; len];
+            consumer.pop_slice(&mut out); // returns silence if starved
+            out
         });
 
         Self {
-            stream: sf.create_stream(routin).unwrap() // creates stream from function "routin"
+            stream: sf.create_stream(routin).unwrap(), // creates stream from function "routin"
+            producer
         }
     }
 
@@ -102,14 +102,14 @@ impl AudioPlayer {
 struct App
 {
     player: AudioPlayer,
-    controller: Arc<Mutex<AudioController>>,
+    controller: AudioController,
     pipeline: Option<PipelineKey>,
     buffer: Buffer,
-    frame_index: u32,
     code: String,
     shader_errors: Option<String>,
     compile: bool,
-    file_path: Option<PathBuf>
+    file_path: Option<PathBuf>,
+    play: bool
 }
 
 #[repr(C)]
@@ -177,7 +177,7 @@ impl App {
         let default_file = "audio/kick.glsl";
         let code = fs::read_to_string(default_file).expect("Failed to read audio file");
 
-        let controller = Arc::new(Mutex::new(AudioController {
+        let controller = AudioController {
             volume: 1.0,
             a: 1.0,
             b: 0.0,
@@ -186,9 +186,9 @@ impl App {
             engine_start_time: SystemTime::now(),
             play_start_time: SystemTime::now(),
             frequency: 440.,
-            audio: vec![],
-        }));
-        let player = AudioPlayer::new(controller.clone());
+            audio: None,
+        };
+        let player = AudioPlayer::new();
 
         let descriptor_set_layout = DescriptorSetLayout::new_push_descriptor(
             ctx.device,
@@ -236,8 +236,8 @@ impl App {
             controller,
             pipeline,
             buffer,
-            frame_index: 0,
             code,
+            play: false,
             shader_errors,
             compile: false,
             file_path: Some(default_file.into())
@@ -253,16 +253,15 @@ impl RenderComponent for App {
             self.update_shader(ctx);
         }
 
-        let mut lock = self.controller.lock().unwrap();
+        let binding = self.buffer.mapped().unwrap();
+        let gpu_data: &[f32] = cast_slice(binding.as_slice());
+        self.controller.audio = Some(AudioPacket {
+            data: gpu_data.try_into().unwrap()
+        });
 
-        if self.frame_index >= 1 {
-            let binding = self.buffer.mapped().unwrap();
-            let gpu_data: &[f32] = cast_slice(binding.as_slice());
-            let packet = AudioPacket {
-                data: gpu_data.try_into().unwrap()
-            };
-            lock.audio.clear();
-            lock.audio.push(packet);
+        if self.play {
+            self.player.producer.push_slice(gpu_data);
+            self.play = false;
         }
 
         if self.pipeline.is_none() {
@@ -275,11 +274,11 @@ impl RenderComponent for App {
         let push_constants = PushConstants {
             time: 0.0,
             samples: BUFFER_SAMPLES as u32,
-            frequency: lock.frequency,
-            a: lock.a,
-            b: lock.b,
-            c: lock.c,
-            d: lock.d,
+            frequency: self.controller.frequency,
+            a: self.controller.a,
+            b: self.controller.b,
+            c: self.controller.c,
+            d: self.controller.d,
         };
         ctx.command_buffer.push_constants(
             &pipeline,
@@ -307,8 +306,6 @@ impl RenderComponent for App {
         );
 
         ctx.command_buffer.dispatch(BUFFER_SAMPLES as u32 / 128, 1, 1);
-
-        self.frame_index += 1;
     }
 }
 
@@ -337,32 +334,39 @@ impl GuiComponent for App {
             });
         });
 
-        let mut lock = self.controller.lock().unwrap();
         egui::SidePanel::left("scene_tree")
             .resizable(true)
             .default_width(520.0)
             .min_width(80.0)
             .show(ctx, |ui| {
-                if let Some(audio) = lock.audio.first() {
+                if let Some(audio) = &self.controller.audio {
                     Plot::new("audio_plot")
                         .view_aspect(2.0)
                         .show(ui, |plot_ui| {
-                            let total_samples = BUFFER_SAMPLES;
-                            // Convert audio samples to plot points
-                            let points = (0..total_samples)
-                                .map(|i| audio.data[i])
-                                .enumerate()
-                                .map(|(i, sample)| [i as f64, sample as f64])
-                                .collect::<Vec<[f64; 2]>>();
-                            let plot_points = PlotPoints::new(points);
+                            let bounds = plot_ui.plot_bounds();
+                            let x_min = (bounds.min()[0] as usize).clamp(0, BUFFER_SAMPLES);
+                            let x_max = (bounds.max()[0] as usize).clamp(0, BUFFER_SAMPLES);
+                            let range = if x_min < x_max { x_min..x_max } else { 0..BUFFER_SAMPLES };
 
-                            plot_ui.line(Line::new("audio", plot_points));
+                            let input: Vec<DataPoint> = audio.data[range.clone()]
+                                .iter()
+                                .enumerate()
+                                .map(|(i, &s)| DataPoint { x: (range.start + i) as f64, y: s as f64 })
+                                .collect();
+
+                            let decimated = lttb(input, 2000)
+                                .into_iter()
+                                .map(|p| [p.x, p.y])
+                                .collect::<Vec<_>>();
+
+                            plot_ui.line(Line::new("audio", PlotPoints::new(decimated)));
                         });
                 }
 
                 ui.horizontal(|ui| {
                     if ui.button("play").clicked() {
-                        lock.play_start_time = SystemTime::now() + Duration::new(0, 5000000);
+                        self.controller.play_start_time = SystemTime::now() + Duration::new(0, 5000000);
+                        self.play = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("compile").clicked() {
@@ -372,12 +376,12 @@ impl GuiComponent for App {
                 });
 
                 ui.style_mut().spacing.slider_width = 190.;
-                ui.add(Slider::new(&mut lock.volume, 0.0..=1.0).text("Volume"));
-                ui.add(Slider::new(&mut lock.frequency, 0.0..=1000.0).text("Frequency"));
-                ui.add(Slider::new(&mut lock.a, 0.0..=2.0).text("a"));
-                ui.add(Slider::new(&mut lock.b, -1.0..=1.0).text("b"));
-                ui.add(Slider::new(&mut lock.c, 0.0..=2.0).text("c"));
-                ui.add(Slider::new(&mut lock.d, 0.0..=2.0).text("d"));
+                ui.add(Slider::new(&mut self.controller.volume, 0.0..=1.0).text("Volume"));
+                ui.add(Slider::new(&mut self.controller.frequency, 0.0..=1000.0).text("Frequency"));
+                ui.add(Slider::new(&mut self.controller.a, 0.0..=2.0).text("a"));
+                ui.add(Slider::new(&mut self.controller.b, -1.0..=1.0).text("b"));
+                ui.add(Slider::new(&mut self.controller.c, 0.0..=2.0).text("c"));
+                ui.add(Slider::new(&mut self.controller.d, 0.0..=2.0).text("d"));
 
             });
 
@@ -419,7 +423,7 @@ fn main() {
     let cen_conf = cen::app::app::AppConfig::default()
         .width(1200)
         .height(800)
-        .vsync(true)
+        .vsync(false)
         .fullscreen(false)
         .resizable(true)
         .log_fps(true);

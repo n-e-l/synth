@@ -17,5 +17,7 @@ bytemuck = { version = "1.17.0", features = ["derive"] }
 egui_plot = "0.34.1"
 egui_code_editor = "=0.2.21"
 rfd = "0.17.2"
+ringbuf = "0.4.8"
+lttb = "0.2.0"
 
 [dev-dependencies]
