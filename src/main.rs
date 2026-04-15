@@ -197,7 +197,7 @@ impl App {
         let buffer = Buffer::new(
             ctx.device,
             ctx.allocator,
-            MemoryLocation::CpuToGpu,
+            MemoryLocation::GpuToCpu,
             size_of::<f32>() as DeviceSize * BUFFER_SAMPLES as u64,
             BufferUsageFlags::STORAGE_BUFFER
         );
