@@ -5,7 +5,6 @@ use std::fs;
 use std::path::PathBuf;
 use cen::graphics::renderer::RenderContext;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
 use bytemuck::{cast_slice, Pod, Zeroable};
 use cen::app::component::{Component, ComponentRegistry};
 use cen::app::engine::InitContext;
@@ -29,27 +28,19 @@ use ringbuf::producer::Producer;
 use ringbuf::traits::Split;
 use crate::app::cpal_wrapper::StreamFactory;
 
-// Pretty low amount as I didn't optimize
-const BUFFER_SAMPLES: usize = 128 * 128;
-
-struct AudioPacket {
-    data: [f32; BUFFER_SAMPLES]
-}
+const BUFFER_SAMPLES: usize = 44800;
 
 struct AudioController {
-    engine_start_time: SystemTime,
-    play_start_time: SystemTime,
     frequency: f32,
     volume: f32,
     a: f32,
     b: f32,
     c: f32,
     d: f32,
-    audio: Option<AudioPacket>,
 }
 
 struct AudioPlayer {
-    stream: Stream,
+    _stream: Stream,
     producer: ringbuf::HeapProd<f32>
 }
 
@@ -57,7 +48,7 @@ impl AudioPlayer {
     fn new() -> Self {
         let sf = StreamFactory::default_factory().unwrap();
 
-        let (mut producer, mut consumer) = ringbuf::HeapRb::<f32>::new(BUFFER_SAMPLES * 4).split();
+        let (producer, mut consumer) = ringbuf::HeapRb::<f32>::new(BUFFER_SAMPLES * 4).split();
 
         let routin = Box::new(move |len: usize| -> Vec<f32> {
             let mut out = vec![0.0; len];
@@ -69,7 +60,7 @@ impl AudioPlayer {
         StreamTrait::play(&stream).unwrap();
 
         Self {
-            stream,
+            _stream: stream,
             producer
         }
     }
@@ -87,7 +78,8 @@ struct App
     compile: bool,
     file_path: Option<PathBuf>,
     play: bool,
-    graph_buf: Vec<Point>
+    graph_buf: Vec<Point>,
+    audio: Option<[f32; BUFFER_SAMPLES]>,
 }
 
 #[repr(C)]
@@ -162,10 +154,7 @@ impl App {
             b: 0.0,
             c: 1.0,
             d: 1.0,
-            engine_start_time: SystemTime::now(),
-            play_start_time: SystemTime::now(),
             frequency: 440.,
-            audio: None,
         };
         let player = AudioPlayer::new();
 
@@ -221,6 +210,7 @@ impl App {
             compile: false,
             file_path: Some(default_file.into()),
             graph_buf: vec![Point::default(); BUFFER_SAMPLES],
+            audio: None,
         }
     }
 }
@@ -235,9 +225,7 @@ impl RenderComponent for App {
 
         let binding = self.buffer.mapped().unwrap();
         let gpu_data: &[f32] = cast_slice(binding.as_slice());
-        self.controller.audio = Some(AudioPacket {
-            data: gpu_data.try_into().unwrap()
-        });
+        self.audio = Some(gpu_data.try_into().unwrap());
 
         if self.play {
             self.player.producer.push_slice(gpu_data);
@@ -320,7 +308,7 @@ impl GuiComponent for App {
             .default_width(520.0)
             .min_width(80.0)
             .show(ctx, |ui| {
-                if let Some(audio) = &self.controller.audio {
+                if let Some(audio) = &self.audio {
                     Plot::new("audio_plot")
                         .view_aspect(2.0)
                         .show(ui, |plot_ui| {
@@ -330,7 +318,7 @@ impl GuiComponent for App {
                             let x_max = (bounds.max()[0] as usize).clamp(0, BUFFER_SAMPLES);
                             let range = if x_min < x_max { x_min..x_max } else { 0..BUFFER_SAMPLES };
 
-                            let slice = &audio.data[range.clone()];
+                            let slice = &audio[range.clone()];
                             let offset = range.start;
 
                             self.graph_buf.clear();
@@ -359,7 +347,6 @@ impl GuiComponent for App {
 
                 ui.horizontal(|ui| {
                     if ui.button("play").clicked() {
-                        self.controller.play_start_time = SystemTime::now() + Duration::new(0, 5000000);
                         self.play = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
