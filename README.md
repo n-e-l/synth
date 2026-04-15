@@ -17,5 +17,5 @@ Then build and run `synth`:
 ```
 git clone https://github.com/n-e-l/synth.git
 cd synth
-cargo run
+cargo run --release
 ```
