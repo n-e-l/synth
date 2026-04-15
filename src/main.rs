@@ -1,6 +1,5 @@
 pub mod app;
 
-use lttb::{lttb, DataPoint};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -24,6 +23,7 @@ use egui::containers::menu;
 use cpal::{Stream};
 use cpal::traits::StreamTrait;
 use egui_code_editor::{CodeEditor, ColorTheme, Completer, Syntax};
+use minmaxlttb::{LttbBuilder, LttbMethod, Point};
 use ringbuf::consumer::Consumer;
 use ringbuf::producer::Producer;
 use ringbuf::traits::Split;
@@ -48,26 +48,6 @@ struct AudioController {
     audio: Option<AudioPacket>,
 }
 
-impl AudioController {
-    fn get_sample(&self, i: u64) -> f32 {
-        if let Some(audio) = &self.audio {
-
-            let index = i as usize % BUFFER_SAMPLES;
-            return audio.data[index]
-        }
-
-        0.
-    }
-
-    // The audio of the entire engine
-    fn sample(&self, t: f32) -> (f32, f32) {
-        let offset = self.play_start_time.duration_since(self.engine_start_time).unwrap_or(Duration::new(0, 0)).as_secs_f32();
-        let i = ((t - offset) * BUFFER_SAMPLES as f32) as u64;
-        let audio = self.get_sample(i);
-        (audio * self.volume, audio * self.volume)
-    }
-}
-
 struct AudioPlayer {
     stream: Stream,
     producer: ringbuf::HeapProd<f32>
@@ -79,24 +59,21 @@ impl AudioPlayer {
 
         let (mut producer, mut consumer) = ringbuf::HeapRb::<f32>::new(BUFFER_SAMPLES * 4).split();
 
-        let sample_rate = sf.config().sample_rate.0;
-        let mut sample_index: u64 = 0;
         let routin = Box::new(move |len: usize| -> Vec<f32> {
-
             let mut out = vec![0.0; len];
             consumer.pop_slice(&mut out); // returns silence if starved
             out
         });
 
+        let stream = sf.create_stream(routin).unwrap();
+        StreamTrait::play(&stream).unwrap();
+
         Self {
-            stream: sf.create_stream(routin).unwrap(), // creates stream from function "routin"
+            stream,
             producer
         }
     }
 
-    fn play(&self) {
-        StreamTrait::play(&self.stream).unwrap();
-    }
 }
 
 struct App
@@ -109,7 +86,8 @@ struct App
     shader_errors: Option<String>,
     compile: bool,
     file_path: Option<PathBuf>,
-    play: bool
+    play: bool,
+    graph_buf: Vec<Point>
 }
 
 #[repr(C)]
@@ -118,6 +96,7 @@ struct PushConstants {
     time: f32,
     samples: u32,
     frequency: f32,
+    volume: f32,
     a: f32,
     b: f32,
     c: f32,
@@ -240,7 +219,8 @@ impl App {
             play: false,
             shader_errors,
             compile: false,
-            file_path: Some(default_file.into())
+            file_path: Some(default_file.into()),
+            graph_buf: vec![Point::default(); BUFFER_SAMPLES],
         }
     }
 }
@@ -275,6 +255,7 @@ impl RenderComponent for App {
             time: 0.0,
             samples: BUFFER_SAMPLES as u32,
             frequency: self.controller.frequency,
+            volume: self.controller.volume,
             a: self.controller.a,
             b: self.controller.b,
             c: self.controller.c,
@@ -343,21 +324,34 @@ impl GuiComponent for App {
                     Plot::new("audio_plot")
                         .view_aspect(2.0)
                         .show(ui, |plot_ui| {
+
                             let bounds = plot_ui.plot_bounds();
                             let x_min = (bounds.min()[0] as usize).clamp(0, BUFFER_SAMPLES);
                             let x_max = (bounds.max()[0] as usize).clamp(0, BUFFER_SAMPLES);
                             let range = if x_min < x_max { x_min..x_max } else { 0..BUFFER_SAMPLES };
 
-                            let input: Vec<DataPoint> = audio.data[range.clone()]
-                                .iter()
-                                .enumerate()
-                                .map(|(i, &s)| DataPoint { x: (range.start + i) as f64, y: s as f64 })
-                                .collect();
+                            let slice = &audio.data[range.clone()];
+                            let offset = range.start;
 
-                            let decimated = lttb(input, 2000)
-                                .into_iter()
-                                .map(|p| [p.x, p.y])
-                                .collect::<Vec<_>>();
+                            self.graph_buf.clear();
+                            self.graph_buf.extend(
+                                slice.iter().enumerate().map(|(i, &s)| Point::new((offset + i) as f64, s as f64))
+                            );
+
+                            let decimated = if self.graph_buf.len() > 2000 {
+                                LttbBuilder::new()
+                                    .method(LttbMethod::MinMax)
+                                    .threshold(2000)
+                                    .ratio(4)
+                                    .build()
+                                    .downsample(&self.graph_buf)
+                                    .unwrap()
+                                    .into_iter()
+                                    .map(|p| [p.x(), p.y()])
+                                    .collect::<Vec<_>>()
+                            } else {
+                                self.graph_buf.iter().map(|p| [p.x(), p.y()]).collect()
+                            };
 
                             plot_ui.line(Line::new("audio", PlotPoints::new(decimated)));
                         });
@@ -378,10 +372,10 @@ impl GuiComponent for App {
                 ui.style_mut().spacing.slider_width = 190.;
                 ui.add(Slider::new(&mut self.controller.volume, 0.0..=1.0).text("Volume"));
                 ui.add(Slider::new(&mut self.controller.frequency, 0.0..=1000.0).text("Frequency"));
-                ui.add(Slider::new(&mut self.controller.a, 0.0..=2.0).text("a"));
-                ui.add(Slider::new(&mut self.controller.b, -1.0..=1.0).text("b"));
-                ui.add(Slider::new(&mut self.controller.c, 0.0..=2.0).text("c"));
-                ui.add(Slider::new(&mut self.controller.d, 0.0..=2.0).text("d"));
+                ui.add(Slider::new(&mut self.controller.a, 0.0..=2.0).text("option[0]"));
+                ui.add(Slider::new(&mut self.controller.b, -1.0..=1.0).text("option[1]"));
+                ui.add(Slider::new(&mut self.controller.c, 0.0..=2.0).text("option[2]"));
+                ui.add(Slider::new(&mut self.controller.d, 0.0..=2.0).text("option[3]"));
 
             });
 
@@ -413,9 +407,6 @@ impl GuiComponent for App {
                     .desired_width(f32::INFINITY)
             );
         });
-
-        // The gui isn't the correct call for this, but there's no other place right now
-        self.player.play();
     }
 }
 
@@ -423,7 +414,7 @@ fn main() {
     let cen_conf = cen::app::app::AppConfig::default()
         .width(1200)
         .height(800)
-        .vsync(false)
+        .vsync(true)
         .fullscreen(false)
         .resizable(true)
         .log_fps(true);
