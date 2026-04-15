@@ -5,6 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use cen::graphics::renderer::RenderContext;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use bytemuck::{cast_slice, Pod, Zeroable};
 use cen::app::component::{Component, ComponentRegistry};
 use cen::app::engine::InitContext;
@@ -78,6 +79,8 @@ struct App
     compile: bool,
     file_path: Option<PathBuf>,
     play: bool,
+    repeat_play: bool,
+    last_play: Instant,
     graph_buf: Vec<Point>,
     audio: Option<[f32; BUFFER_SAMPLES]>,
 }
@@ -206,6 +209,8 @@ impl App {
             buffer,
             code,
             play: false,
+            repeat_play: false,
+            last_play: Instant::now(),
             shader_errors,
             compile: false,
             file_path: Some(default_file.into()),
@@ -226,6 +231,14 @@ impl RenderComponent for App {
         let binding = self.buffer.mapped().unwrap();
         let gpu_data: &[f32] = cast_slice(binding.as_slice());
         self.audio = Some(gpu_data.try_into().unwrap());
+
+        if self.repeat_play {
+            self.play = false;
+            if Instant::now().duration_since(self.last_play).as_millis() > 1000 {
+                self.player.producer.push_slice(gpu_data);
+                self.last_play = Instant::now();
+            }
+        }
 
         if self.play {
             self.player.producer.push_slice(gpu_data);
@@ -349,6 +362,7 @@ impl GuiComponent for App {
                     if ui.button("play").clicked() {
                         self.play = true;
                     }
+                    ui.checkbox(&mut self.repeat_play, "Repeat");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("compile").clicked() {
                             self.compile = true;
