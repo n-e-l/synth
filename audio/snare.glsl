@@ -76,6 +76,6 @@ vec2 snare(float t, float q) {
     return env * osc;
 }
 
-vec2 audio(float t, float f, float[4] options) {
-    return snare(t, 1);
+vec2 audio(float t, float v, float f, float[4] option) {
+    return v * snare(t, 1);
 }
