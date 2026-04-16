@@ -1,7 +1,7 @@
 # Synth
 ![build](https://github.com/n-e-l/synth/actions/workflows/rust.yml/badge.svg)
 
-A simple glsl audio editor. This was a personal playground so don't judge the code too hard.
+A simple glsl audio editor.
 
 - In-app code editor
 - audio preview
@@ -20,3 +20,9 @@ git clone https://github.com/n-e-l/synth.git
 cd synth
 cargo run --release
 ```
+
+## Planned features
+
+- Proper GPU based plot rendering
+- Quick-compile keybind
+- Longer audio sample generation
