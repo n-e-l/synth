@@ -12,7 +12,8 @@ A simple glsl audio editor. This was a personal playground so don't judge the co
 
 ## Building & running
 
-You might need to have [Vulkan SDK](https://vulkan.lunarg.com) installed.  
+You will need to have the [Vulkan SDK](https://vulkan.lunarg.com) installed.
+  
 Then build and run `synth`:
 ```
 git clone https://github.com/n-e-l/synth.git
