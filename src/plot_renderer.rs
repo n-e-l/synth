@@ -13,13 +13,13 @@ use cen::graphics::image_store::ImageKey;
 use cen::graphics::pipeline_store::{ComputePipelineConfig, GraphicsPipelineConfig, PipelineKey};
 use cen::graphics::renderer::{RenderComponent, RenderContext};
 use cen::vulkan::{Buffer, ComputePipeline, DescriptorSetLayout, Image, ImageConfig, ImageTrait, Pipeline};
-use crate::{BUFFER_SAMPLES, SAMPLES_PER_SECOND};
+use crate::{BUFFER_DURATION, BUFFER_SAMPLES, SAMPLES_PER_SECOND};
 
 pub struct PlotRenderer {
     width: u32,
     height: u32,
     zoom: f32,
-    offset: f32,
+    sample_offset: f32,
     image: Image,
     audio_buffer: Buffer,
     minmax_buffer: Buffer,
@@ -33,16 +33,6 @@ pub struct PlotRenderer {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct PushConstants {
-    samples: u32,
-    pixels_x: u32,
-    pixels_y: u32,
-    zoom: f32,
-    offset: u32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
-struct RenderPushConstants {
     samples_per_seconds: u32,
     total_samples: u32,
     pixels_x: u32,
@@ -132,9 +122,9 @@ impl PlotRenderer {
                 ],
                 push_constant_ranges: vec![
                     PushConstantRange::default()
-                        .stage_flags(ShaderStageFlags::VERTEX)
+                        .stage_flags(ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT)
                         .offset(0)
-                        .size(size_of::<RenderPushConstants>() as u32)
+                        .size(size_of::<PushConstants>() as u32)
                 ],
                 macros: HashMap::new()
             }
@@ -156,7 +146,7 @@ impl PlotRenderer {
                     PushConstantRange::default()
                         .stage_flags(ShaderStageFlags::FRAGMENT)
                         .offset(0)
-                        .size(size_of::<RenderPushConstants>() as u32)
+                        .size(size_of::<PushConstants>() as u32)
                 ],
                 macros: HashMap::new()
             }
@@ -179,7 +169,7 @@ impl PlotRenderer {
             zoom: 1.0,
             texture: None,
             reset_texture: false,
-            offset: 0f32,
+            sample_offset: 0f32,
         }
     }
 
@@ -218,11 +208,12 @@ impl RenderComponent for PlotRenderer {
         ctx.command_buffer.bind_pipeline(minmax_pipeline);
 
         let push_constants = PushConstants {
-            samples: BUFFER_SAMPLES as u32,
+            samples_per_seconds: SAMPLES_PER_SECOND as u32,
+            total_samples: BUFFER_SAMPLES as u32,
             pixels_x: self.width,
             pixels_y: self.height,
             zoom: self.zoom,
-            offset: self.offset as u32,
+            offset: self.sample_offset as u32,
         };
         ctx.command_buffer.push_constants(
             minmax_pipeline,
@@ -286,13 +277,13 @@ impl RenderComponent for PlotRenderer {
             let background_pipeline = ctx.pipeline_store.get(self.background_pipeline).unwrap();
             ctx.command_buffer.bind_pipeline(background_pipeline);
 
-            let push_constants = RenderPushConstants {
+            let push_constants = PushConstants {
                 samples_per_seconds: SAMPLES_PER_SECOND as u32,
                 total_samples: BUFFER_SAMPLES as u32,
                 pixels_x: self.width,
                 pixels_y: self.height,
                 zoom: self.zoom,
-                offset: self.offset as u32,
+                offset: self.sample_offset as u32,
             };
             ctx.command_buffer.push_constants(
                 background_pipeline,
@@ -308,7 +299,7 @@ impl RenderComponent for PlotRenderer {
 
             ctx.command_buffer.push_constants(
                 graph_pipeline,
-                ShaderStageFlags::VERTEX,
+                ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT,
                 0,
                 &bytemuck::cast_slice(std::slice::from_ref(&push_constants))
             );
@@ -385,8 +376,8 @@ impl PlotRenderer {
 
         if response.dragged_by(egui::PointerButton::Primary) {
             let delta = response.drag_delta() * ui.pixels_per_point();
-            let samples_per_pixel = BUFFER_SAMPLES as f32 / self.width as f32 * self.zoom;
-            self.offset -= delta.x * samples_per_pixel;
+            let samples_per_pixel = SAMPLES_PER_SECOND as f32 / self.width as f32 * self.zoom;
+            self.sample_offset -= delta.x * samples_per_pixel;
         }
 
         // Scroll bar
@@ -395,8 +386,8 @@ impl PlotRenderer {
             response.rect.max,
         );
 
-        let thumb_frac = self.offset / BUFFER_SAMPLES as f32;
-        let thumb_width = (bar_rect.width() * self.zoom).clamp(8.0, bar_rect.width());
+        let thumb_frac = self.sample_offset / BUFFER_SAMPLES as f32;
+        let thumb_width = (bar_rect.width() * self.zoom / BUFFER_DURATION ).clamp(8.0, bar_rect.width());
         let thumb_x = bar_rect.min.x + thumb_frac * (bar_rect.width() - thumb_width);
         let thumb_rect = Rect::from_min_max(
             Pos2::new(thumb_x, bar_rect.min.y),
@@ -404,18 +395,25 @@ impl PlotRenderer {
         );
 
         if thumb_width < bar_rect.width() {
-            // Render
-            painter.rect_filled(bar_rect, 0.0, Color32::from_black_alpha(40));
-            painter.rect_filled(thumb_rect, 3.0, Color32::from_white_alpha(100));
 
             // Draggable
             let thumb_response = ui.interact(thumb_rect, ui.id().with("scrollbar_thumb"), Sense::drag());
             if thumb_response.dragged() {
                 let delta = thumb_response.drag_delta().x;
                 let scroll_range = bar_rect.width() - thumb_width;
-                self.offset = (self.offset + delta / scroll_range * BUFFER_SAMPLES as f32)
+                self.sample_offset = (self.sample_offset + delta / scroll_range * BUFFER_SAMPLES as f32)
                     .clamp(0.0, BUFFER_SAMPLES as f32);
             }
+
+            // Render
+            let thumb_color = if thumb_response.dragged() {
+                Color32::from_white_alpha(200)
+            } else if thumb_response.hovered() {
+                Color32::from_white_alpha(150)
+            } else {
+                Color32::from_white_alpha(100)
+            };
+            painter.rect_filled(thumb_rect, 3.0, thumb_color);
         }
 
     }

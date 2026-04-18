@@ -18,7 +18,7 @@ void main()
 {
     vec3 color = vec3( 0 );
 
-    float offset = constants.offset / float(constants.total_samples);
+    float offset = constants.offset / float(constants.samples_per_second);
 
     float p = offset + (uv.x - .5) * constants.zoom;
 
@@ -27,8 +27,8 @@ void main()
     const int MINOR_GRID_LINES_PER_SECOND = 100;
     const int MAJOR_GRID_LINES_PER_SECOND = 10;
 
-    vec3 minor_grid_color = vec3(.02);
-    vec3 major_grid_color = vec3(.08);
+    vec3 minor_grid_color = vec3(.02) * min(1., 2. / constants.zoom );
+    vec3 major_grid_color = vec3(.08) * min(1., 4. / constants.zoom );
     if( fract(p * MINOR_GRID_LINES_PER_SECOND) / MINOR_GRID_LINES_PER_SECOND < units_per_pixel ) {
         color = minor_grid_color;
     }

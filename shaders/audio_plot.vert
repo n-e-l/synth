@@ -24,6 +24,8 @@ vec2 vertex[6] = vec2[](
     vec2( 0.0,  1.0)
 );
 
+layout(location = 0) out vec2 minmax;
+
 void main()
 {
     float pixelwidth = 2. / float(constants.pixels_x);
@@ -31,7 +33,7 @@ void main()
 
     float x = 2. * gl_InstanceIndex / constants.pixels_x - 1.;
 
-    vec2 minmax = minmax_data.data[gl_InstanceIndex];
+    minmax = minmax_data.data[gl_InstanceIndex];
 
     // Discard invalid samples
     if(minmax[1] < minmax[0]) return;

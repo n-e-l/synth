@@ -12,7 +12,8 @@ layout( std430, binding = 1 ) buffer MinMaxBuffer {
 
 layout( push_constant ) uniform PushConstants
 {
-    uint samples;
+    uint samples_per_second;
+    uint total_samples;
     uint pixels_x;
     uint pixels_y;
     float zoom;
@@ -25,15 +26,15 @@ void main()
     if( pixel > constants.pixels_x ) return;
 
 
-    float samples_per_pixel = constants.zoom * constants.samples / float(constants.pixels_x);
+    float samples_per_pixel = constants.zoom * constants.samples_per_second / float(constants.pixels_x);
 
-    int start_sample = int(floor(constants.offset - constants.samples * constants.zoom / 2. + pixel * samples_per_pixel));
+    int start_sample = int(floor(constants.offset - constants.samples_per_second * constants.zoom / 2. + pixel * samples_per_pixel));
     int end_sample = int(ceil(start_sample + samples_per_pixel + 1));
 
     // Invalid sample as default
     vec2 minmax = vec2(1., -1.); // Min bigger than max
 
-    if( start_sample > 0 && end_sample < constants.samples ) {
+    if( start_sample > 0 && end_sample < constants.total_samples ) {
         minmax = vec2(100., -100.);
         for (int i = start_sample; i < end_sample; i++) {
             float s = audio_data.data[i];
@@ -42,8 +43,8 @@ void main()
         }
 
         // Always fill to zero
-        minmax[0] = min(minmax[0], 0.);
-        minmax[1] = max(minmax[1], 0.);
+//        minmax[0] = min(minmax[0], 0.);
+//        minmax[1] = max(minmax[1], 0.);
     }
 
 

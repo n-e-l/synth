@@ -32,7 +32,8 @@ use crate::app::cpal_wrapper::StreamFactory;
 use crate::plot_renderer::PlotRenderer;
 
 const SAMPLES_PER_SECOND: usize = 44800;
-const BUFFER_SAMPLES: usize = 44800;
+const BUFFER_DURATION: f32 = 1f32;
+const BUFFER_SAMPLES: usize = (SAMPLES_PER_SECOND as f32 * BUFFER_DURATION) as usize;
 
 struct AudioController {
     frequency: f32,
