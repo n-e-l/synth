@@ -27,12 +27,24 @@ pub struct PlotRenderer {
     texture: Option<TextureId>,
     reset_texture: bool,
     graph_pipeline: PipelineKey,
+    background_pipeline: PipelineKey,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct PushConstants {
     samples: u32,
+    pixels_x: u32,
+    pixels_y: u32,
+    zoom: f32,
+    offset: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct RenderPushConstants {
+    samples_per_seconds: u32,
+    total_samples: u32,
     pixels_x: u32,
     pixels_y: u32,
     zoom: f32,
@@ -122,7 +134,29 @@ impl PlotRenderer {
                     PushConstantRange::default()
                         .stage_flags(ShaderStageFlags::VERTEX)
                         .offset(0)
-                        .size(size_of::<PushConstants>() as u32)
+                        .size(size_of::<RenderPushConstants>() as u32)
+                ],
+                macros: HashMap::new()
+            }
+        ) {
+            Ok(p) => { p }
+            Err(e) => {
+                panic!( "{}", e )
+            }
+        };
+
+        let background_pipeline = match ctx.pipeline_store.insert(
+            GraphicsPipelineConfig {
+                vertex_shader_path: PathBuf::from("shaders/fullscreen.vert"),
+                fragment_shader_path: PathBuf::from("shaders/audio_background.frag"),
+                color_formats: vec![Format::R8G8B8A8_UNORM],
+                depth_format: None,
+                descriptor_set_layouts: vec![],
+                push_constant_ranges: vec![
+                    PushConstantRange::default()
+                        .stage_flags(ShaderStageFlags::FRAGMENT)
+                        .offset(0)
+                        .size(size_of::<RenderPushConstants>() as u32)
                 ],
                 macros: HashMap::new()
             }
@@ -139,6 +173,7 @@ impl PlotRenderer {
             minmax_buffer,
             minmax_pipeline,
             graph_pipeline,
+            background_pipeline,
             width,
             height,
             zoom: 1.0,
@@ -247,16 +282,30 @@ impl RenderComponent for PlotRenderer {
             .color_attachments(&color_attachments);
         ctx.command_buffer.begin_rendering(&rendering_info);
         {
-            let graph_pipeline = ctx.pipeline_store.get(self.graph_pipeline).unwrap();
-            ctx.command_buffer.bind_pipeline(graph_pipeline);
+            // Background
+            let background_pipeline = ctx.pipeline_store.get(self.background_pipeline).unwrap();
+            ctx.command_buffer.bind_pipeline(background_pipeline);
 
-            let push_constants = PushConstants {
-                samples: BUFFER_SAMPLES as u32,
+            let push_constants = RenderPushConstants {
+                samples_per_seconds: SAMPLES_PER_SECOND as u32,
+                total_samples: BUFFER_SAMPLES as u32,
                 pixels_x: self.width,
                 pixels_y: self.height,
                 zoom: self.zoom,
                 offset: self.offset as u32,
             };
+            ctx.command_buffer.push_constants(
+                background_pipeline,
+                ShaderStageFlags::FRAGMENT,
+                0,
+                &bytemuck::cast_slice(std::slice::from_ref(&push_constants))
+            );
+            ctx.command_buffer.draw(6, self.width, 0,  0);
+
+            // Graph
+            let graph_pipeline = ctx.pipeline_store.get(self.graph_pipeline).unwrap();
+            ctx.command_buffer.bind_pipeline(graph_pipeline);
+
             ctx.command_buffer.push_constants(
                 graph_pipeline,
                 ShaderStageFlags::VERTEX,
@@ -338,6 +387,35 @@ impl PlotRenderer {
             let delta = response.drag_delta() * ui.pixels_per_point();
             let samples_per_pixel = BUFFER_SAMPLES as f32 / self.width as f32 * self.zoom;
             self.offset -= delta.x * samples_per_pixel;
+        }
+
+        // Scroll bar
+        let bar_rect = Rect::from_min_max(
+            Pos2::new(response.rect.min.x, response.rect.max.y - 6.0),
+            response.rect.max,
+        );
+
+        let thumb_frac = self.offset / BUFFER_SAMPLES as f32;
+        let thumb_width = (bar_rect.width() * self.zoom).clamp(8.0, bar_rect.width());
+        let thumb_x = bar_rect.min.x + thumb_frac * (bar_rect.width() - thumb_width);
+        let thumb_rect = Rect::from_min_max(
+            Pos2::new(thumb_x, bar_rect.min.y),
+            Pos2::new(thumb_x + thumb_width, bar_rect.max.y),
+        );
+
+        if thumb_width < bar_rect.width() {
+            // Render
+            painter.rect_filled(bar_rect, 0.0, Color32::from_black_alpha(40));
+            painter.rect_filled(thumb_rect, 3.0, Color32::from_white_alpha(100));
+
+            // Draggable
+            let thumb_response = ui.interact(thumb_rect, ui.id().with("scrollbar_thumb"), Sense::drag());
+            if thumb_response.dragged() {
+                let delta = thumb_response.drag_delta().x;
+                let scroll_range = bar_rect.width() - thumb_width;
+                self.offset = (self.offset + delta / scroll_range * BUFFER_SAMPLES as f32)
+                    .clamp(0.0, BUFFER_SAMPLES as f32);
+            }
         }
 
     }

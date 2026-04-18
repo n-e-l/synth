@@ -30,7 +30,9 @@ void main()
     int start_sample = int(floor(constants.offset - constants.samples * constants.zoom / 2. + pixel * samples_per_pixel));
     int end_sample = int(ceil(start_sample + samples_per_pixel + 1));
 
-    vec2 minmax = vec2(0.);
+    // Invalid sample as default
+    vec2 minmax = vec2(1., -1.); // Min bigger than max
+
     if( start_sample > 0 && end_sample < constants.samples ) {
         minmax = vec2(100., -100.);
         for (int i = start_sample; i < end_sample; i++) {
@@ -38,11 +40,12 @@ void main()
             minmax[0] = min(minmax[0], s);
             minmax[1] = max(minmax[1], s);
         }
+
+        // Always fill to zero
+        minmax[0] = min(minmax[0], 0.);
+        minmax[1] = max(minmax[1], 0.);
     }
 
-    // Always fill to zero
-    minmax[0] = min(minmax[0], 0.);
-    minmax[1] = max(minmax[1], 0.);
 
     minmax_data.data[ pixel ] = minmax;
 }

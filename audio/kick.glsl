@@ -30,5 +30,5 @@ vec2 kick(float t, float q) {
 
 // Method called by the main shader
 vec2 audio(float t, float v, float f, float[4] option) {
-    return v * 0.5 * kick(t, option[0] * 0.001);
+    return v * kick(t, option[0] * 0.001);
 }

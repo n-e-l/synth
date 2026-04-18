@@ -2,7 +2,8 @@
 
 layout( push_constant ) uniform PushConstants
 {
-    uint samples;
+    uint samples_per_second;
+    uint total_samples;
     uint pixels_x;
     uint pixels_y;
     float zoom;
@@ -31,6 +32,9 @@ void main()
     float x = 2. * gl_InstanceIndex / constants.pixels_x - 1.;
 
     vec2 minmax = minmax_data.data[gl_InstanceIndex];
+
+    // Discard invalid samples
+    if(minmax[1] < minmax[0]) return;
 
     float height = max(minmax[1] - minmax[0], pixelheight * 1.);
     vec2 pos = vec2(x, minmax[0]) + vertex[gl_VertexIndex] * vec2(pixelwidth, height);
