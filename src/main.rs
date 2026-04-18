@@ -1,4 +1,5 @@
 pub mod app;
+mod plot_renderer;
 
 use std::collections::HashMap;
 use std::fs;
@@ -15,7 +16,7 @@ use cen::ash::vk::{BufferUsageFlags, DescriptorSetLayoutBinding, DescriptorType,
 use cen::egui;
 use cen::egui::{Context, Slider};
 use cen::gpu_allocator::MemoryLocation;
-use cen::graphics::pipeline_store::{PipelineConfig, PipelineKey};
+use cen::graphics::pipeline_store::{ComputePipelineConfig, PipelineKey};
 use cen::graphics::renderer::RenderComponent;
 use cen::vulkan::{Buffer, DescriptorSetLayout};
 use egui_plot::{Line, Plot, PlotPoints};
@@ -28,8 +29,10 @@ use ringbuf::consumer::Consumer;
 use ringbuf::producer::Producer;
 use ringbuf::traits::Split;
 use crate::app::cpal_wrapper::StreamFactory;
+use crate::plot_renderer::PlotRenderer;
 
-const BUFFER_SAMPLES: usize = 44800;
+const SAMPLES_PER_SECOND: usize = 44800;
+const BUFFER_SAMPLES: usize = 44800 * 8;
 
 struct AudioController {
     frequency: f32,
@@ -49,7 +52,7 @@ impl AudioPlayer {
     fn new() -> Self {
         let sf = StreamFactory::default_factory().unwrap();
 
-        let (producer, mut consumer) = ringbuf::HeapRb::<f32>::new(BUFFER_SAMPLES * 4).split();
+        let (producer, mut consumer) = ringbuf::HeapRb::<f32>::new(SAMPLES_PER_SECOND * 4).split();
 
         let routin = Box::new(move |len: usize| -> Vec<f32> {
             let mut out = vec![0.0; len];
@@ -81,15 +84,15 @@ struct App
     play: bool,
     repeat_play: bool,
     last_play: Instant,
-    graph_buf: Vec<Point>,
-    audio: Option<[f32; BUFFER_SAMPLES]>,
+    plot: PlotRenderer
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct PushConstants {
     time: f32,
-    samples: u32,
+    samples_per_second: u32,
+    total_samples: u32,
     frequency: f32,
     volume: f32,
     a: f32,
@@ -119,7 +122,7 @@ impl App {
         );
         let mut macros = HashMap::new();
         macros.insert("audio_function".to_string(), self.code.clone());
-        let pipeline_config = PipelineConfig {
+        let pipeline_config = ComputePipelineConfig {
             shader_path: PathBuf::from("shaders/audio.comp"),
             descriptor_set_layouts: vec![ descriptor_set_layout ],
             push_constant_ranges: vec![
@@ -132,7 +135,7 @@ impl App {
         };
 
         let pipeline = if let Some(pipeline) = self.pipeline {
-            ctx.pipeline_store.update(pipeline, pipeline_config)
+            ctx.pipeline_store.write(pipeline, pipeline_config)
         } else {
             ctx.pipeline_store.insert(pipeline_config)
         };
@@ -173,7 +176,7 @@ impl App {
         );
         let mut macros = HashMap::new();
         macros.insert("audio_function".to_string(), code.clone());
-        let pipeline_config = PipelineConfig {
+        let pipeline_config = ComputePipelineConfig {
             shader_path: PathBuf::from("shaders/audio.comp"),
             descriptor_set_layouts: vec![ descriptor_set_layout ],
             push_constant_ranges: vec![
@@ -206,7 +209,7 @@ impl App {
             player,
             controller,
             pipeline,
-            buffer,
+            buffer: buffer.clone(),
             code,
             play: false,
             repeat_play: false,
@@ -214,8 +217,7 @@ impl App {
             shader_errors,
             compile: false,
             file_path: Some(default_file.into()),
-            graph_buf: vec![Point::default(); BUFFER_SAMPLES],
-            audio: None,
+            plot: PlotRenderer::new(ctx, buffer)
         }
     }
 }
@@ -230,7 +232,6 @@ impl RenderComponent for App {
 
         let binding = self.buffer.mapped().unwrap();
         let gpu_data: &[f32] = cast_slice(binding.as_slice());
-        self.audio = Some(gpu_data.try_into().unwrap());
 
         if self.repeat_play {
             self.play = false;
@@ -241,7 +242,8 @@ impl RenderComponent for App {
         }
 
         if self.play {
-            self.player.producer.push_slice(gpu_data);
+            let count = self.player.producer.push_slice(gpu_data);
+            println!("count {}", count);
             self.play = false;
         }
 
@@ -249,12 +251,14 @@ impl RenderComponent for App {
             return;
         }
 
+        // Calculate audio
         let pipeline = ctx.pipeline_store.get(self.pipeline.unwrap()).unwrap();
-        ctx.command_buffer.bind_pipeline(&pipeline);
+        ctx.command_buffer.bind_pipeline(pipeline);
 
         let push_constants = PushConstants {
             time: 0.0,
-            samples: BUFFER_SAMPLES as u32,
+            samples_per_second: SAMPLES_PER_SECOND as u32,
+            total_samples: BUFFER_SAMPLES as u32,
             frequency: self.controller.frequency,
             volume: self.controller.volume,
             a: self.controller.a,
@@ -263,36 +267,33 @@ impl RenderComponent for App {
             d: self.controller.d,
         };
         ctx.command_buffer.push_constants(
-            &pipeline,
+            pipeline,
             ShaderStageFlags::COMPUTE,
             0,
             &bytemuck::cast_slice(std::slice::from_ref(&push_constants))
         );
 
-        let bindings = [vk::DescriptorBufferInfo::default()
-            .buffer(*self.buffer.handle())
-            .offset(0)
-            .range(self.buffer.size())
-        ];
-
-        let write_descriptor_set = WriteDescriptorSet::default()
-            .dst_binding(0)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .buffer_info(&bindings);
-
         ctx.command_buffer.push_descriptor_set(
-            &pipeline,
+            pipeline,
             0,
-            &[write_descriptor_set]
+            &[
+                WriteDescriptorSet::default()
+                    .dst_binding(0)
+                    .dst_array_element(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(&[self.buffer.binding()])
+            ]
         );
 
         ctx.command_buffer.dispatch(BUFFER_SAMPLES as u32 / 128, 1, 1);
+
+        // Calculate plot
+        self.plot.render(ctx);
     }
 }
 
 impl GuiComponent for App {
-    fn gui(&mut self, _: &mut GuiHandler, ctx: &Context) {
+    fn gui(&mut self, gui_handler: &mut GuiHandler, ctx: &Context) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             menu::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -321,42 +322,7 @@ impl GuiComponent for App {
             .default_width(520.0)
             .min_width(80.0)
             .show(ctx, |ui| {
-                if let Some(audio) = &self.audio {
-                    Plot::new("audio_plot")
-                        .view_aspect(2.0)
-                        .show(ui, |plot_ui| {
-
-                            let bounds = plot_ui.plot_bounds();
-                            let x_min = (bounds.min()[0] as usize).clamp(0, BUFFER_SAMPLES);
-                            let x_max = (bounds.max()[0] as usize).clamp(0, BUFFER_SAMPLES);
-                            let range = if x_min < x_max { x_min..x_max } else { 0..BUFFER_SAMPLES };
-
-                            let slice = &audio[range.clone()];
-                            let offset = range.start;
-
-                            self.graph_buf.clear();
-                            self.graph_buf.extend(
-                                slice.iter().enumerate().map(|(i, &s)| Point::new((offset + i) as f64, s as f64))
-                            );
-
-                            let decimated = if self.graph_buf.len() > 2000 {
-                                LttbBuilder::new()
-                                    .method(LttbMethod::MinMax)
-                                    .threshold(2000)
-                                    .ratio(4)
-                                    .build()
-                                    .downsample(&self.graph_buf)
-                                    .unwrap()
-                                    .into_iter()
-                                    .map(|p| [p.x(), p.y()])
-                                    .collect::<Vec<_>>()
-                            } else {
-                                self.graph_buf.iter().map(|p| [p.x(), p.y()]).collect()
-                            };
-
-                            plot_ui.line(Line::new("audio", PlotPoints::new(decimated)));
-                        });
-                }
+                self.plot.ui(gui_handler, ui);
 
                 ui.horizontal(|ui| {
                     if ui.button("play").clicked() {
@@ -415,7 +381,7 @@ fn main() {
     let cen_conf = cen::app::app::AppConfig::default()
         .width(1200)
         .height(800)
-        .vsync(true)
+        .vsync(false)
         .fullscreen(false)
         .resizable(true)
         .log_fps(true);

@@ -9,7 +9,8 @@ layout( std430, binding = 0 ) buffer AudioBuffer {
 layout( push_constant ) uniform PushConstants
 {
     float time;
-    int samples;
+    int samples_per_second;
+    int total_samples;
     float frequency;
     float volume;
     float[4] options;
@@ -20,6 +21,6 @@ audio_function
 void main()
 {
     int i = int( gl_GlobalInvocationID.x );
-    if( i > constants.samples ) return;
-    audio_data.data[i] = audio(constants.time + float( i ) / constants.samples, constants.volume, constants.frequency, constants.options).r;
+    if( i > constants.total_samples ) return;
+    audio_data.data[i] = audio(constants.time + float( i ) / constants.samples_per_second, constants.volume, constants.frequency, constants.options).r;
 }
