@@ -403,7 +403,7 @@ impl PlotRenderer {
         }
 
         let top_margin = 10.0;
-        let label_width = 40.0;  // left axis
+        let label_width = 30.0;  // left axis
         let label_height = 20.0; // bottom timescale
 
         let mut total_rect = ui.available_rect_before_wrap();
@@ -457,8 +457,8 @@ impl PlotRenderer {
         );
 
         // bottom timescale
-        let view_start = (self.sample_offset as f32 - BUFFER_SAMPLES as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
-        let view_end   = (self.sample_offset as f32 + BUFFER_SAMPLES as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
+        let view_start = (self.sample_offset as f32 - SAMPLES_PER_SECOND as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
+        let view_end   = (self.sample_offset as f32 + SAMPLES_PER_SECOND as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
         let view_range = view_end - view_start;
 
         let rough_step = view_range / 8.0;
