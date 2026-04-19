@@ -404,7 +404,7 @@ fn main() {
     let cen_conf = cen::app::app::AppConfig::default()
         .width(1200)
         .height(800)
-        .vsync(false)
+        .vsync(true)
         .fullscreen(false)
         .resizable(true)
         .log_fps(true);
