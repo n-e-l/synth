@@ -24,5 +24,6 @@ cargo run --release
 ## Planned features
 
 - ~~Proper GPU based plot rendering~~
+- Render both left and right audio channel
 - Quick-compile keybind
 - Longer audio sample generation
