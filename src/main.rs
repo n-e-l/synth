@@ -16,9 +16,9 @@ use cen::ash::vk::{BufferUsageFlags, DescriptorSetLayoutBinding, DescriptorType,
 use cen::egui;
 use cen::egui::{Context, Slider};
 use cen::gpu_allocator::MemoryLocation;
-use cen::graphics::pipeline_store::{ComputePipelineConfig, PipelineKey};
+use cen::graphics::pipeline_store::{PipelineKey};
 use cen::graphics::renderer::RenderComponent;
-use cen::vulkan::{Buffer, DescriptorSetLayout};
+use cen::vulkan::{Buffer, ComputePipelineConfig, DescriptorSetLayout};
 use egui_plot::{Line, Plot, PlotPoints};
 use egui::containers::menu;
 use cpal::{Stream};
@@ -124,7 +124,7 @@ impl App {
         let mut macros = HashMap::new();
         macros.insert("audio_function".to_string(), self.code.clone());
         let pipeline_config = ComputePipelineConfig {
-            shader_path: PathBuf::from("shaders/audio.comp"),
+            shader_source: PathBuf::from("shaders/audio.comp"),
             descriptor_set_layouts: vec![ descriptor_set_layout ],
             push_constant_ranges: vec![
                 PushConstantRange::default()
@@ -178,7 +178,7 @@ impl App {
         let mut macros = HashMap::new();
         macros.insert("audio_function".to_string(), code.clone());
         let pipeline_config = ComputePipelineConfig {
-            shader_path: PathBuf::from("shaders/audio.comp"),
+            shader_source: PathBuf::from("shaders/audio.comp"),
             descriptor_set_layouts: vec![ descriptor_set_layout ],
             push_constant_ranges: vec![
                 PushConstantRange::default()

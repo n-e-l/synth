@@ -1,18 +1,19 @@
 use std::collections::HashMap;
+use std::os::raw::c_void;
 use std::path::PathBuf;
 use bytemuck::{Pod, Zeroable};
 use cen::app::engine::InitContext;
 use cen::app::gui::{GuiComponent, GuiHandler};
 use cen::ash::vk;
-use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DescriptorBufferInfo, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, RenderingInfoKHR, ShaderStageFlags, Viewport, WriteDescriptorSet};
+use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DescriptorBufferInfo, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Extent3D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, RenderingInfoKHR, ResolveModeFlags, SampleCountFlags, ShaderStageFlags, Viewport, WriteDescriptorSet};
 use cen::egui;
 use cen::egui::{Color32, Context, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, TextureId, Ui, Vec2, Widget};
 use cen::egui::load::SizedTexture;
 use cen::gpu_allocator::MemoryLocation;
 use cen::graphics::image_store::ImageKey;
-use cen::graphics::pipeline_store::{ComputePipelineConfig, GraphicsPipelineConfig, PipelineKey};
+use cen::graphics::pipeline_store::{PipelineKey};
 use cen::graphics::renderer::{RenderComponent, RenderContext};
-use cen::vulkan::{Buffer, ComputePipeline, DescriptorSetLayout, Image, ImageConfig, ImageTrait, Pipeline};
+use cen::vulkan::{Buffer, ComputePipeline, ComputePipelineConfig, DescriptorSetLayout, GraphicsPipelineConfig, Image, ImageConfig, ImageTrait, Pipeline};
 use crate::{BUFFER_DURATION, BUFFER_SAMPLES, SAMPLES_PER_SECOND};
 
 pub struct PlotRenderer {
@@ -20,6 +21,7 @@ pub struct PlotRenderer {
     height: u32,
     zoom: f32,
     sample_offset: f32,
+    ms_image: Image,
     image: Image,
     audio_buffer: Buffer,
     minmax_buffer: Buffer,
@@ -50,11 +52,33 @@ impl PlotRenderer {
         let image = Image::new(
             ctx.device,
             ctx.allocator,
-            ImageConfig::default()
-                .width(width)
-                .height(height)
-                .filter(Filter::LINEAR)
-                .image_usage_flags(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED)
+            ImageConfig {
+                extent: Extent3D {
+                    width,
+                    height,
+                    depth: 1
+                },
+                samples: SampleCountFlags::TYPE_1,
+                filter: Filter::LINEAR,
+                image_usage_flags: ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED,
+                ..Default::default()
+            }
+        );
+
+        let ms_image = Image::new(
+            ctx.device,
+            ctx.allocator,
+            ImageConfig {
+                extent: Extent3D {
+                    width,
+                    height,
+                    depth: 1
+                },
+                samples: SampleCountFlags::TYPE_4,
+                filter: Filter::LINEAR,
+                image_usage_flags: ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED,
+                ..Default::default()
+            }
         );
 
         // Buffer
@@ -62,14 +86,14 @@ impl PlotRenderer {
             ctx.device,
             ctx.allocator,
             MemoryLocation::GpuOnly,
-            (width as usize * size_of::<f32>() * 2) as DeviceSize, // Two floats (min, max) per pixel
+            (width as usize * size_of::<f32>() * 4) as DeviceSize,
             BufferUsageFlags::STORAGE_BUFFER | BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::TRANSFER_SRC
         );
 
         // Pipelines
         let minmax_pipeline = match ctx.pipeline_store.insert(
             ComputePipelineConfig {
-                shader_path: PathBuf::from("shaders/minmax_audio_pixels.comp"),
+                shader_source: PathBuf::from("shaders/minmax_audio_pixels.comp"),
                 descriptor_set_layouts: vec![
                     DescriptorSetLayout::new_push_descriptor(
                         ctx.device,
@@ -104,10 +128,11 @@ impl PlotRenderer {
 
         let graph_pipeline = match ctx.pipeline_store.insert(
             GraphicsPipelineConfig {
-                vertex_shader_path: PathBuf::from("shaders/audio_plot.vert"),
-                fragment_shader_path: PathBuf::from("shaders/audio_plot.frag"),
+                vertex_shader_source: PathBuf::from("shaders/audio_plot.vert"),
+                fragment_shader_source: PathBuf::from("shaders/audio_plot.frag"),
                 color_formats: vec![Format::R8G8B8A8_UNORM],
                 depth_format: None,
+                sample_count: SampleCountFlags::TYPE_4,
                 descriptor_set_layouts: vec![
                     DescriptorSetLayout::new_push_descriptor(
                         ctx.device,
@@ -137,10 +162,11 @@ impl PlotRenderer {
 
         let background_pipeline = match ctx.pipeline_store.insert(
             GraphicsPipelineConfig {
-                vertex_shader_path: PathBuf::from("shaders/fullscreen.vert"),
-                fragment_shader_path: PathBuf::from("shaders/audio_background.frag"),
+                vertex_shader_source: PathBuf::from("shaders/fullscreen.vert"),
+                fragment_shader_source: PathBuf::from("shaders/audio_background.frag"),
                 color_formats: vec![Format::R8G8B8A8_UNORM],
                 depth_format: None,
+                sample_count: SampleCountFlags::TYPE_4,
                 descriptor_set_layouts: vec![],
                 push_constant_ranges: vec![
                     PushConstantRange::default()
@@ -160,6 +186,7 @@ impl PlotRenderer {
         Self {
             audio_buffer,
             image,
+            ms_image,
             minmax_buffer,
             minmax_pipeline,
             graph_pipeline,
@@ -177,18 +204,40 @@ impl PlotRenderer {
         self.image = Image::new(
             ctx.device,
             ctx.allocator,
-            self.image.config()
-                .width(width)
-                .height(height)
-                .image_usage_flags(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED)
-                .filter(Filter::LINEAR)
+            ImageConfig {
+                extent: Extent3D {
+                    width,
+                    height,
+                    depth: 1
+                },
+                image_usage_flags: ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED,
+                samples: SampleCountFlags::TYPE_1,
+                filter: Filter::LINEAR,
+                ..Default::default()
+            }
+        );
+
+        self.ms_image = Image::new(
+            ctx.device,
+            ctx.allocator,
+            ImageConfig {
+                extent: Extent3D {
+                    width,
+                    height,
+                    depth: 1
+                },
+                image_usage_flags: ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED,
+                samples: SampleCountFlags::TYPE_4,
+                filter: Filter::LINEAR,
+                ..Default::default()
+            }
         );
 
         self.minmax_buffer = Buffer::new(
             ctx.device,
             ctx.allocator,
             MemoryLocation::GpuOnly,
-            (width as usize * size_of::<f32>() * 2) as DeviceSize, // Two floats (min, max) per pixel
+            (width as usize * size_of::<f32>() * 4) as DeviceSize, // Two floats (min, max) per pixel
             BufferUsageFlags::STORAGE_BUFFER | BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::TRANSFER_SRC
         );
 
@@ -254,17 +303,29 @@ impl RenderComponent for PlotRenderer {
             AccessFlags::NONE,
             AccessFlags::SHADER_WRITE
         );
+        ctx.command_buffer.image_barrier(
+            &self.ms_image,
+            ImageLayout::UNDEFINED,
+            ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            PipelineStageFlags::TOP_OF_PIPE,
+            PipelineStageFlags::FRAGMENT_SHADER,
+            AccessFlags::NONE,
+            AccessFlags::SHADER_WRITE
+        );
 
         ctx.command_buffer.set_viewport(Viewport{ x: 0f32, y: 0f32, width: self.width as f32, height: self.height as f32, min_depth: 0f32, max_depth: 0f32});
         ctx.command_buffer.set_scissor(Rect2D { offset: Offset2D::default(), extent: Extent2D { width: self.width, height: self.height }});
 
-        let color_attachments = vec![
+        let mut color_attachments = vec![
             RenderingAttachmentInfo::default()
                 .image_layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .load_op(AttachmentLoadOp::CLEAR)
                 .store_op(AttachmentStoreOp::STORE)
                 .clear_value(ClearValue { color: ClearColorValue { float32: [0f32, 0f32, 0f32, 1f32] } })
-                .image_view(self.image.image_view())
+                .image_view(self.ms_image.image_view())
+                .resolve_image_layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .resolve_image_view(self.image.image_view())
+                .resolve_mode(ResolveModeFlags::AVERAGE)
         ];
         let rendering_info = vk::RenderingInfoKHR::default()
             .render_area(Rect2D { offset: Offset2D { x: 0, y: 0 }, extent: Extent2D { width: self.width, height: self.height } })
@@ -291,7 +352,7 @@ impl RenderComponent for PlotRenderer {
                 0,
                 &bytemuck::cast_slice(std::slice::from_ref(&push_constants))
             );
-            ctx.command_buffer.draw(6, self.width, 0,  0);
+            ctx.command_buffer.draw(6, 1, 0,  0);
 
             // Graph
             let graph_pipeline = ctx.pipeline_store.get(self.graph_pipeline).unwrap();

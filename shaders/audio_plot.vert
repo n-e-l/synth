@@ -10,8 +10,14 @@ layout( push_constant ) uniform PushConstants
     uint offset;
 } constants;
 
+struct PixelData {
+    float minimum;
+    float maximum;
+    int direction;
+    int unused;
+};
 layout( std430, binding = 0 ) readonly buffer MinMaxBuffer {
-    vec2[] data;
+    PixelData[] data;
 } minmax_data;
 
 vec2 vertex[6] = vec2[](
@@ -33,13 +39,31 @@ void main()
 
     float x = 2. * gl_InstanceIndex / constants.pixels_x - 1.;
 
-    minmax = minmax_data.data[gl_InstanceIndex];
+    PixelData minmax = minmax_data.data[gl_InstanceIndex];
+    float minimum = minmax.minimum;
+    float maximum = minmax.maximum;
 
     // Discard invalid samples
-    if(minmax[1] < minmax[0]) return;
+    if(maximum < minimum) return;
 
-    float height = max(minmax[1] - minmax[0], pixelheight * 1.);
-    vec2 pos = vec2(x, minmax[0]) + vertex[gl_VertexIndex] * vec2(pixelwidth, height);
+    vec2 vertex_p = vertex[gl_VertexIndex];
+
+    // Shift x position in order to have aliased lines
+    float x_offset = 0.;
+    if( minmax.direction == 1 ) {
+        // Upward line, move the top vertices right by half a pixel
+        // Move the bottom pixel left by half a pixel
+        x_offset = (vertex_p.y * 2. - 1.) * pixelwidth / 2.;
+    } else if (minmax.direction == 2) {
+        // Downward line, move the top vertices left by half a pixel
+        // Move the bottom pixel right by half a pixel
+        x_offset = -(vertex_p.y * 2. - 1.) * pixelwidth / 2.;
+    }
+    x_offset *= 1.;
+
+    float height = max(maximum - minimum, pixelheight * 1.);
+    vec2 pos = vec2(x + x_offset, minimum) + vertex_p * vec2(pixelwidth, height);
+
 
     gl_Position = vec4(pos, 0.0, 1.0);
 }
