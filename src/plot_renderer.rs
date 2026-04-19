@@ -6,7 +6,7 @@ use cen::app::gui::GuiHandler;
 use cen::ash::vk;
 use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Extent3D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, ResolveModeFlags, SampleCountFlags, ShaderStageFlags, Viewport, WriteDescriptorSet};
 use cen::egui;
-use cen::egui::{Color32, Pos2, Rect, Sense, TextureId, Ui, Vec2};
+use cen::egui::{Color32, Pos2, Rect, Sense, Stroke, TextureId, Ui, Vec2};
 use cen::gpu_allocator::MemoryLocation;
 use cen::graphics::pipeline_store::{PipelineKey};
 use cen::graphics::renderer::{RenderComponent, RenderContext};
@@ -402,29 +402,93 @@ impl PlotRenderer {
             self.texture = Some(gui.create_texture(&self.image));
         }
 
-        let logical_width = ui.available_width() as u32;
-        let logical_height = u32::min( logical_width / 2, ui.available_height() as u32 );
+        let top_margin = 10.0;
+        let label_width = 40.0;  // left axis
+        let label_height = 20.0; // bottom timescale
 
-        let scale = ui.ctx().pixels_per_point();
-        self.width  = (logical_width as f32 * scale) as u32;
-        self.height  = (logical_height as f32 * scale) as u32;
+        let mut total_rect = ui.available_rect_before_wrap();
+        total_rect.set_height(f32::min( total_rect.width() / 2., total_rect.height() ));
+
+        // Plot width
+        let waveform_rect = Rect::from_min_max(
+            Pos2::new(total_rect.min.x + label_width, total_rect.min.y + top_margin),
+            Pos2::new(total_rect.max.x, total_rect.max.y - label_height),
+        );
+
+        let left_rect = Rect::from_min_max(
+            Pos2::new(total_rect.min.x, total_rect.min.y + top_margin),
+            Pos2::new(total_rect.min.x + label_width, total_rect.max.y - label_height),
+        );
+
+        let bottom_rect = Rect::from_min_max(
+            Pos2::new(total_rect.min.x + label_width, total_rect.max.y - label_height),
+            total_rect.max,
+        );
 
         let (response, painter) = ui.allocate_painter(
-            Vec2::new(
-                logical_width as f32,
-                logical_height as f32
-            ),
+            total_rect.size(),
             Sense::click_and_drag(),
         );
 
+        // Left labels
+        for i in 0..=4 {
+            let frac = i as f32 / 4.0;
+            let amp = 1.0 - frac * 2.0; // 1.0 to -1.0
+            let y = left_rect.min.y + frac * left_rect.height();
+            painter.text(
+                Pos2::new(left_rect.max.x - 4.0, y),
+                egui::Align2::RIGHT_CENTER,
+                format!("{:.1}", amp),
+                egui::FontId::monospace(10.0),
+                Color32::from_white_alpha(180),
+            );
+        }
+
+        // Plot
+        let scale = ui.ctx().pixels_per_point();
+        self.width  = (waveform_rect.width() * scale) as u32;
+        self.height  = (waveform_rect.height() * scale) as u32;
+
         painter.image(
             self.texture.unwrap(),
-            response.rect,
+            waveform_rect,
             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), // full UV
             Color32::WHITE,
         );
 
-        // zoom toward cursor
+        // bottom timescale
+        let view_start = (self.sample_offset as f32 - BUFFER_SAMPLES as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
+        let view_end   = (self.sample_offset as f32 + BUFFER_SAMPLES as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
+        let view_range = view_end - view_start;
+
+        let rough_step = view_range / 8.0;
+        let magnitude = rough_step.log10().floor();
+        let pow = 10f32.powf(magnitude);
+        let normalized = rough_step / pow;
+        let step = if normalized < 2.0 { 2.0 } else if normalized < 5.0 { 5.0 } else { 10.0 } * pow;
+
+        let first_tick = (view_start / step).ceil() * step;
+        let mut t = first_tick;
+        while t <= view_end {
+            let frac = (t - view_start) / view_range;
+            let x = bottom_rect.min.x + frac * bottom_rect.width();
+
+            painter.line_segment(
+                [Pos2::new(x, bottom_rect.min.y), Pos2::new(x, bottom_rect.min.y + 3.0)],
+                Stroke::new(1.0, Color32::from_white_alpha(60)),
+            );
+            painter.text(
+                Pos2::new(x, bottom_rect.min.y + 4.0),
+                egui::Align2::CENTER_TOP,
+                format!("{:.2}s", t),
+                egui::FontId::monospace(10.0),
+                Color32::from_white_alpha(180),
+            );
+
+            t += step;
+        }
+
+        // Interactions
         if let Some(_) = response.hover_pos() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
@@ -440,8 +504,8 @@ impl PlotRenderer {
 
         // Scroll bar
         let bar_rect = Rect::from_min_max(
-            Pos2::new(response.rect.min.x, response.rect.max.y - 6.0),
-            response.rect.max,
+            Pos2::new(waveform_rect.min.x, waveform_rect.max.y - 6.0),
+            waveform_rect.max,
         );
 
         let thumb_frac = self.sample_offset / BUFFER_SAMPLES as f32;
