@@ -23,6 +23,6 @@ cargo run --release
 
 ## Planned features
 
-- Proper GPU based plot rendering
+- ~~Proper GPU based plot rendering~~
 - Quick-compile keybind
 - Longer audio sample generation

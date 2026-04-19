@@ -1,19 +1,16 @@
 use std::collections::HashMap;
-use std::os::raw::c_void;
 use std::path::PathBuf;
 use bytemuck::{Pod, Zeroable};
 use cen::app::engine::InitContext;
-use cen::app::gui::{GuiComponent, GuiHandler};
+use cen::app::gui::GuiHandler;
 use cen::ash::vk;
-use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DescriptorBufferInfo, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Extent3D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, RenderingInfoKHR, ResolveModeFlags, SampleCountFlags, ShaderStageFlags, Viewport, WriteDescriptorSet};
+use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Extent3D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, ResolveModeFlags, SampleCountFlags, ShaderStageFlags, Viewport, WriteDescriptorSet};
 use cen::egui;
-use cen::egui::{Color32, Context, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, TextureId, Ui, Vec2, Widget};
-use cen::egui::load::SizedTexture;
+use cen::egui::{Color32, Pos2, Rect, Sense, TextureId, Ui, Vec2};
 use cen::gpu_allocator::MemoryLocation;
-use cen::graphics::image_store::ImageKey;
 use cen::graphics::pipeline_store::{PipelineKey};
 use cen::graphics::renderer::{RenderComponent, RenderContext};
-use cen::vulkan::{Buffer, ComputePipeline, ComputePipelineConfig, DescriptorSetLayout, GraphicsPipelineConfig, Image, ImageConfig, ImageTrait, Pipeline};
+use cen::vulkan::{Buffer, ComputePipelineConfig, DescriptorSetLayout, GraphicsPipelineConfig, Image, ImageConfig, ImageTrait};
 use crate::{BUFFER_DURATION, BUFFER_SAMPLES, SAMPLES_PER_SECOND};
 
 pub struct PlotRenderer {
@@ -248,7 +245,7 @@ impl PlotRenderer {
 impl RenderComponent for PlotRenderer {
     fn render(&mut self, ctx: &mut RenderContext) {
 
-        if( self.image.width() != self.width || self.image.height() != self.height ) {
+        if self.image.width() != self.width || self.image.height() != self.height {
             self.resize_gpu_handles(ctx, self.width, self.height);
         }
 
@@ -316,7 +313,7 @@ impl RenderComponent for PlotRenderer {
         ctx.command_buffer.set_viewport(Viewport{ x: 0f32, y: 0f32, width: self.width as f32, height: self.height as f32, min_depth: 0f32, max_depth: 0f32});
         ctx.command_buffer.set_scissor(Rect2D { offset: Offset2D::default(), extent: Extent2D { width: self.width, height: self.height }});
 
-        let mut color_attachments = vec![
+        let color_attachments = vec![
             RenderingAttachmentInfo::default()
                 .image_layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .load_op(AttachmentLoadOp::CLEAR)
@@ -428,7 +425,7 @@ impl PlotRenderer {
         );
 
         // zoom toward cursor
-        if let Some(hover_pos) = response.hover_pos() {
+        if let Some(_) = response.hover_pos() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
                 self.zoom *= 1.0 + scroll * -0.001;
