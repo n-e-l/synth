@@ -1,0 +1,63 @@
+#version 450
+
+layout ( local_size_x = 64, local_size_y = 1, local_size_z = 1 ) in;
+
+layout( std430, binding = 0 ) buffer AudioBuffer {
+    float[] data;
+} audio_data;
+
+struct PixelData {
+    float minimum;
+    float maximum;
+    int direction;
+    int unused;
+};
+layout( std430, binding = 1 ) buffer MinMaxBuffer {
+    PixelData[] data;
+} minmax_data;
+
+layout( push_constant ) uniform PushConstants
+{
+    uint samples_per_second;
+    uint total_samples;
+    uint pixels_x;
+    uint pixels_y;
+    float zoom;
+    uint offset;
+} constants;
+
+void main()
+{
+    int pixel = int( gl_GlobalInvocationID.x );
+    if( pixel > constants.pixels_x ) return;
+
+    float samples_per_pixel = constants.zoom * constants.samples_per_second / float(constants.pixels_x);
+    float pixel_size_y = 2.0 / constants.pixels_y;
+
+    int start_sample = int(floor(constants.offset - constants.samples_per_second * constants.zoom / 2. + pixel * samples_per_pixel));
+    int end_sample = int(ceil(start_sample + samples_per_pixel) + 1); // Add 1 to not have any gaps
+
+    // Invalid sample as default
+    vec2 minmax = vec2(1., -1.); // Min bigger than max
+
+    if( start_sample > 0 && end_sample < constants.total_samples ) {
+        minmax = vec2(100., -100.);
+        for (int i = start_sample; i < end_sample; i++) {
+            float s = audio_data.data[i];
+            minmax[0] = min(minmax[0], s);
+            minmax[1] = max(minmax[1], s);
+        }
+
+        // Always fill to zero
+//        minmax[0] = min(minmax[0], 0.);
+//        minmax[1] = max(minmax[1], 0.);
+    }
+
+    float a = audio_data.data[start_sample];
+    float b = audio_data.data[end_sample];
+    int direction = 0;
+    if( a < b ) direction = 1;
+    if( a > b ) direction = 2;
+
+    minmax_data.data[ pixel ] = PixelData(minmax[0], minmax[1], direction, 0);
+}
