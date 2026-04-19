@@ -3,7 +3,7 @@
 layout ( local_size_x = 128, local_size_y = 1, local_size_z = 1 ) in;
 
 layout( std430, binding = 0 ) buffer AudioBuffer {
-    float[] data;
+    vec2[] data;
 } audio_data;
 
 layout( push_constant ) uniform PushConstants
@@ -22,5 +22,5 @@ void main()
 {
     int i = int( gl_GlobalInvocationID.x );
     if( i > constants.total_samples ) return;
-    audio_data.data[i] = audio(constants.time + float( i ) / constants.samples_per_second, constants.volume, constants.frequency, constants.options).r;
+    audio_data.data[i] = audio(constants.time + float( i ) / constants.samples_per_second, constants.volume, constants.frequency, constants.options);
 }

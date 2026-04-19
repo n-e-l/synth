@@ -8,13 +8,14 @@ layout( push_constant ) uniform PushConstants
     uint pixels_y;
     float zoom;
     uint offset;
+    uint current_sample;
 } constants;
 
 struct PixelData {
     float minimum;
     float maximum;
     int direction;
-    int unused;
+    int sample_index;
 };
 layout( std430, binding = 0 ) readonly buffer MinMaxBuffer {
     PixelData[] data;
@@ -30,7 +31,8 @@ vec2 vertex[6] = vec2[](
     vec2( 0.0,  1.0)
 );
 
-layout(location = 0) out vec2 minmax;
+layout(location = 0) flat out vec2 minmax;
+layout(location = 1) flat out uint sample_index;
 
 void main()
 {
@@ -64,6 +66,6 @@ void main()
     float height = max(maximum - minimum, pixelheight * 1.);
     vec2 pos = vec2(x + x_offset, minimum) + vertex_p * vec2(pixelwidth, height);
 
-
+    sample_index = minmax.sample_index;
     gl_Position = vec4(pos, 0.0, 1.0);
 }

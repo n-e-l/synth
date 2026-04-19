@@ -8,6 +8,7 @@ layout( push_constant ) uniform PushConstants
     uint pixels_y;
     float zoom;
     uint offset;
+    uint current_sample;
 } constants;
 
 layout(location = 0) in vec2 uv;
@@ -20,6 +21,7 @@ void main()
 
     float offset = constants.offset / float(constants.samples_per_second);
 
+    // Normalized pixel coord (like uv)
     float p = offset + (uv.x - .5) * constants.zoom;
 
     float units_per_pixel = constants.zoom / constants.pixels_x;
@@ -47,5 +49,13 @@ void main()
 
     outColor = vec4(color, 1.0);
 
-//    outColor = vec4(uv, 0., 1.);
+    float size = 30.;
+    float sample_dist = p - constants.current_sample / float(constants.samples_per_second);
+    if( constants.current_sample != 0 && abs(sample_dist) < units_per_pixel * size && sample_dist < 0. ) {
+        sample_dist = abs(sample_dist);
+        float t = clamp((sample_dist * constants.pixels_x) / size, 0., 1.);
+        float alpha = pow(1. - t, 20.) + 0.03 * (1. - t);
+        vec3 playhead_color = vec3(0.0, 0.6, 0.45) * .7;
+        outColor = vec4(mix(color, playhead_color, alpha), 1.0);
+    }
 }

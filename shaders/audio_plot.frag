@@ -8,16 +8,19 @@ layout( push_constant ) uniform PushConstants
     uint pixels_y;
     float zoom;
     uint offset;
+    uint current_sample;
 } constants;
 
 
 layout(location = 0) out vec4 outColor;
 
-layout(location = 0) in vec2 minmax;
+layout(location = 0) flat in vec2 minmax;
+layout(location = 1) flat in uint sample_index;
 
 void main()
 {
     vec3 color = vec3(241. / 255.0, 121. / 255., 25. / 255.);
     color = pow(color, vec3(2.2));
+
     outColor = vec4(color, 1.0);
 }

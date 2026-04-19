@@ -6,7 +6,7 @@ use cen::app::gui::GuiHandler;
 use cen::ash::vk;
 use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Extent3D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, ResolveModeFlags, SampleCountFlags, ShaderStageFlags, Viewport, WriteDescriptorSet};
 use cen::egui;
-use cen::egui::{Color32, Pos2, Rect, Sense, Stroke, TextureId, Ui, Vec2};
+use cen::egui::{Color32, Pos2, Rect, Sense, Stroke, TextureId, Ui};
 use cen::gpu_allocator::MemoryLocation;
 use cen::graphics::pipeline_store::{PipelineKey};
 use cen::graphics::renderer::{RenderComponent, RenderContext};
@@ -27,6 +27,7 @@ pub struct PlotRenderer {
     reset_texture: bool,
     graph_pipeline: PipelineKey,
     background_pipeline: PipelineKey,
+    current_sample: usize
 }
 
 #[repr(C)]
@@ -38,6 +39,7 @@ struct PushConstants {
     pixels_y: u32,
     zoom: f32,
     offset: u32,
+    current_sample: usize
 }
 
 impl PlotRenderer {
@@ -190,10 +192,11 @@ impl PlotRenderer {
             background_pipeline,
             width,
             height,
-            zoom: 1.0,
+            zoom: 1.1,
             texture: None,
             reset_texture: false,
-            sample_offset: 0f32,
+            sample_offset: SAMPLES_PER_SECOND as f32 / 2f32,
+            current_sample: 0
         }
     }
 
@@ -260,6 +263,7 @@ impl RenderComponent for PlotRenderer {
             pixels_y: self.height,
             zoom: self.zoom,
             offset: self.sample_offset as u32,
+            current_sample: self.current_sample
         };
         ctx.command_buffer.push_constants(
             minmax_pipeline,
@@ -342,6 +346,7 @@ impl RenderComponent for PlotRenderer {
                 pixels_y: self.height,
                 zoom: self.zoom,
                 offset: self.sample_offset as u32,
+                current_sample: self.current_sample
             };
             ctx.command_buffer.push_constants(
                 background_pipeline,
@@ -391,7 +396,9 @@ impl RenderComponent for PlotRenderer {
 }
 
 impl PlotRenderer {
-    pub fn ui(&mut self, gui: &mut GuiHandler, ui: &mut Ui) {
+    pub fn ui(&mut self, gui: &mut GuiHandler, ui: &mut Ui, current_sample: usize) {
+
+        self.current_sample = current_sample;
 
         if self.reset_texture {
             gui.remove_texture(self.texture.unwrap());

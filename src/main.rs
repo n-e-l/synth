@@ -30,8 +30,9 @@ use crate::app::cpal_wrapper::StreamFactory;
 use crate::plot_renderer::PlotRenderer;
 
 const SAMPLES_PER_SECOND: usize = 44800;
-const BUFFER_DURATION: f32 = 20f32;
+const BUFFER_DURATION: f32 = 1f32;
 const BUFFER_SAMPLES: usize = (SAMPLES_PER_SECOND as f32 * BUFFER_DURATION) as usize;
+const AUDIO_BUFFER_SIZE: usize = 1024 * 4;
 
 struct AudioController {
     frequency: f32,
@@ -51,7 +52,7 @@ impl AudioPlayer {
     fn new() -> Self {
         let sf = StreamFactory::default_factory().unwrap();
 
-        let (producer, mut consumer) = ringbuf::HeapRb::<f32>::new(SAMPLES_PER_SECOND * 4).split();
+        let (producer, mut consumer) = ringbuf::HeapRb::<f32>::new(AUDIO_BUFFER_SIZE).split();
 
         let routin = Box::new(move |len: usize| -> Vec<f32> {
             let mut out = vec![0.0; len];
@@ -82,7 +83,8 @@ struct App
     file_path: Option<PathBuf>,
     play: bool,
     repeat_play: bool,
-    last_play: Instant,
+    played_offset: Option<usize>,
+    start_time: Option<Instant>,
     plot: PlotRenderer
 }
 
@@ -200,7 +202,7 @@ impl App {
             ctx.device,
             ctx.allocator,
             MemoryLocation::GpuToCpu,
-            size_of::<f32>() as DeviceSize * BUFFER_SAMPLES as u64,
+            size_of::<f32>() as DeviceSize * 2 * BUFFER_SAMPLES as u64,
             BufferUsageFlags::STORAGE_BUFFER
         );
 
@@ -212,7 +214,8 @@ impl App {
             code,
             play: false,
             repeat_play: false,
-            last_play: Instant::now(),
+            played_offset: None,
+            start_time: None,
             shader_errors,
             compile: false,
             file_path: Some(default_file.into()),
@@ -229,21 +232,36 @@ impl RenderComponent for App {
             self.update_shader(ctx);
         }
 
-        let binding = self.buffer.mapped().unwrap();
-        let gpu_data: &[f32] = cast_slice(binding.as_slice());
+        // If we're already playing
+        if self.repeat_play && self.played_offset.is_none() {
+            self.play = true;
+        }
 
-        if self.repeat_play {
-            self.play = false;
-            if Instant::now().duration_since(self.last_play).as_millis() > 1000 {
-                self.player.producer.push_slice(gpu_data);
-                self.last_play = Instant::now();
+        if let Some(start_time) = &self.start_time {
+            if Instant::now().duration_since(*start_time).as_millis() as f32 / 1000f32 >= BUFFER_DURATION {
+                self.played_offset = None;
+                self.start_time = None;
+
+                if self.repeat_play {
+                    self.play = true;
+                }
             }
         }
 
         if self.play {
-            let count = self.player.producer.push_slice(gpu_data);
-            println!("count {}", count);
+            self.played_offset = Some(0);
+            self.start_time = Some(Instant::now());
             self.play = false;
+        }
+
+        if let Some(played_offset) = &mut self.played_offset {
+            if *played_offset < BUFFER_SAMPLES {
+                let binding = self.buffer.mapped().unwrap();
+                let gpu_data: &[f32] = cast_slice(binding.as_slice());
+                let remaining = &gpu_data[*played_offset..];
+                let count = self.player.producer.push_slice(remaining);
+                *played_offset += count;
+            }
         }
 
         if self.pipeline.is_none() {
@@ -316,12 +334,18 @@ impl GuiComponent for App {
             });
         });
 
+        let time_offset = if let Some(time) = self.start_time {
+            Instant::now().duration_since(time).as_millis() as usize * (SAMPLES_PER_SECOND / 1000)
+        } else {
+            0
+        };
+
         egui::SidePanel::left("scene_tree")
             .resizable(true)
             .default_width(520.0)
             .min_width(80.0)
             .show(ctx, |ui| {
-                self.plot.ui(gui_handler, ui);
+                self.plot.ui(gui_handler, ui, time_offset);
 
                 ui.horizontal(|ui| {
                     if ui.button("play").clicked() {
