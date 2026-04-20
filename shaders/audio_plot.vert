@@ -23,12 +23,12 @@ layout( std430, binding = 0 ) readonly buffer MinMaxBuffer {
 
 vec2 vertex[6] = vec2[](
     vec2( 0.0,  0.0),
-    vec2( 1.0,  0.0),
     vec2( 0.0,  1.0),
+    vec2( 1.0,  0.0),
 
     vec2( 1.0,  0.0),
-    vec2( 1.0,  1.0),
-    vec2( 0.0,  1.0)
+    vec2( 0.0,  1.0),
+    vec2( 1.0,  1.0)
 );
 
 layout(location = 0) flat out vec2 minmax;
@@ -65,6 +65,7 @@ void main()
 
     float height = max(maximum - minimum, pixelheight * 1.);
     vec2 pos = vec2(x + x_offset, minimum) + vertex_p * vec2(pixelwidth, height);
+    pos.y = -pos.y;
 
     sample_index = minmax.sample_index;
     gl_Position = vec4(pos, 0.0, 1.0);

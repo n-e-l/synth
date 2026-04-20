@@ -3,19 +3,18 @@ use std::path::PathBuf;
 use bytemuck::{Pod, Zeroable};
 use cen::app::engine::InitContext;
 use cen::app::gui::GuiHandler;
+use cen::app::Texture;
 use cen::ash::vk;
 use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Extent3D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, ResolveModeFlags, SampleCountFlags, ShaderStageFlags, Viewport, WriteDescriptorSet};
 use cen::egui;
-use cen::egui::{Color32, Pos2, Rect, Sense, Stroke, TextureId, Ui};
+use cen::egui::{Color32, Pos2, Rect, Sense, Stroke, Ui};
 use cen::gpu_allocator::MemoryLocation;
 use cen::graphics::pipeline_store::{PipelineKey};
 use cen::graphics::renderer::{RenderComponent, RenderContext};
-use cen::vulkan::{Buffer, ComputePipelineConfig, DescriptorSetLayout, GraphicsPipelineConfig, Image, ImageConfig, ImageTrait};
+use cen::vulkan::{Allocator, Buffer, ComputePipelineConfig, DescriptorSetLayout, Device, GraphicsPipelineConfig, Image, ImageConfig, ImageTrait};
 use crate::{BUFFER_DURATION, BUFFER_SAMPLES, SAMPLES_PER_SECOND};
 
 pub struct PlotRenderer {
-    width: u32,
-    height: u32,
     zoom: f32,
     sample_offset: f32,
     ms_image: Image,
@@ -23,8 +22,7 @@ pub struct PlotRenderer {
     audio_buffer: Buffer,
     minmax_buffer: Buffer,
     minmax_pipeline: PipelineKey,
-    texture: Option<TextureId>,
-    reset_texture: bool,
+    texture: Option<Texture>,
     graph_pipeline: PipelineKey,
     background_pipeline: PipelineKey,
     current_sample: usize
@@ -190,20 +188,17 @@ impl PlotRenderer {
             minmax_pipeline,
             graph_pipeline,
             background_pipeline,
-            width,
-            height,
             zoom: 1.1,
             texture: None,
-            reset_texture: false,
             sample_offset: SAMPLES_PER_SECOND as f32 / 2f32,
             current_sample: 0
         }
     }
 
-    fn resize_gpu_handles(&mut self, ctx: &mut RenderContext, width: u32, height: u32) {
+    fn resize_gpu_handles(&mut self, device: &Device, allocator: &mut Allocator, width: u32, height: u32) {
         self.image = Image::new(
-            ctx.device,
-            ctx.allocator,
+            device,
+            allocator,
             ImageConfig {
                 extent: Extent3D {
                     width,
@@ -218,8 +213,8 @@ impl PlotRenderer {
         );
 
         self.ms_image = Image::new(
-            ctx.device,
-            ctx.allocator,
+            device,
+            allocator,
             ImageConfig {
                 extent: Extent3D {
                     width,
@@ -234,23 +229,17 @@ impl PlotRenderer {
         );
 
         self.minmax_buffer = Buffer::new(
-            ctx.device,
-            ctx.allocator,
+            device,
+            allocator,
             MemoryLocation::GpuOnly,
             (width as usize * size_of::<f32>() * 4) as DeviceSize, // Two floats (min, max) per pixel
             BufferUsageFlags::STORAGE_BUFFER | BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::TRANSFER_SRC
         );
-
-        self.reset_texture = true;
     }
 }
 
 impl RenderComponent for PlotRenderer {
     fn render(&mut self, ctx: &mut RenderContext) {
-
-        if self.image.width() != self.width || self.image.height() != self.height {
-            self.resize_gpu_handles(ctx, self.width, self.height);
-        }
 
         // Compute per-pixel min-max values
         let minmax_pipeline = ctx.pipeline_store.get(self.minmax_pipeline).unwrap();
@@ -259,8 +248,8 @@ impl RenderComponent for PlotRenderer {
         let push_constants = PushConstants {
             samples_per_seconds: SAMPLES_PER_SECOND as u32,
             total_samples: BUFFER_SAMPLES as u32,
-            pixels_x: self.width,
-            pixels_y: self.height,
+            pixels_x: self.image.width(),
+            pixels_y: self.image.height(),
             zoom: self.zoom,
             offset: self.sample_offset as u32,
             current_sample: self.current_sample
@@ -292,7 +281,7 @@ impl RenderComponent for PlotRenderer {
                 ]
         );
 
-        ctx.command_buffer.dispatch( (self.width + 63) / 64, 1, 1);
+        ctx.command_buffer.dispatch( (self.image.width() + 63) / 64, 1, 1);
 
         // Draw the plot
         ctx.command_buffer.image_barrier(
@@ -314,8 +303,8 @@ impl RenderComponent for PlotRenderer {
             AccessFlags::SHADER_WRITE
         );
 
-        ctx.command_buffer.set_viewport(Viewport{ x: 0f32, y: 0f32, width: self.width as f32, height: self.height as f32, min_depth: 0f32, max_depth: 0f32});
-        ctx.command_buffer.set_scissor(Rect2D { offset: Offset2D::default(), extent: Extent2D { width: self.width, height: self.height }});
+        ctx.command_buffer.set_viewport(Viewport{ x: 0f32, y: 0f32, width: self.image.width() as f32, height: self.image.height() as f32, min_depth: 0f32, max_depth: 0f32});
+        ctx.command_buffer.set_scissor(Rect2D { offset: Offset2D::default(), extent: Extent2D { width: self.image.width(), height: self.image.height() }});
 
         let color_attachments = vec![
             RenderingAttachmentInfo::default()
@@ -329,7 +318,7 @@ impl RenderComponent for PlotRenderer {
                 .resolve_mode(ResolveModeFlags::AVERAGE)
         ];
         let rendering_info = vk::RenderingInfoKHR::default()
-            .render_area(Rect2D { offset: Offset2D { x: 0, y: 0 }, extent: Extent2D { width: self.width, height: self.height } })
+            .render_area(Rect2D { offset: Offset2D { x: 0, y: 0 }, extent: Extent2D { width: self.image.width(), height: self.image.height() } })
             .layer_count(1)
             .view_mask(0)
             .color_attachments(&color_attachments);
@@ -342,8 +331,8 @@ impl RenderComponent for PlotRenderer {
             let push_constants = PushConstants {
                 samples_per_seconds: SAMPLES_PER_SECOND as u32,
                 total_samples: BUFFER_SAMPLES as u32,
-                pixels_x: self.width,
-                pixels_y: self.height,
+                pixels_x: self.image.width(),
+                pixels_y: self.image.height(),
                 zoom: self.zoom,
                 offset: self.sample_offset as u32,
                 current_sample: self.current_sample
@@ -379,7 +368,7 @@ impl RenderComponent for PlotRenderer {
                 ]
             );
 
-            ctx.command_buffer.draw(6, self.width, 0,  0);
+            ctx.command_buffer.draw(6, self.image.width(), 0,  0);
         }
         ctx.command_buffer.end_rendering();
 
@@ -400,11 +389,6 @@ impl PlotRenderer {
 
         self.current_sample = current_sample;
 
-        if self.reset_texture {
-            gui.remove_texture(self.texture.unwrap());
-            self.texture = None;
-            self.reset_texture = false;
-        }
         if self.texture.is_none() {
             self.texture = Some(gui.create_texture(&self.image));
         }
@@ -437,6 +421,15 @@ impl PlotRenderer {
             Sense::click_and_drag(),
         );
 
+        // Recreate images if needed
+        let scale = ui.ctx().pixels_per_point();
+        let pixel_width  = (waveform_rect.width() * scale) as u32;
+        let pixel_height  = (waveform_rect.height() * scale) as u32;
+        if self.image.width() != pixel_width || self.image.height() != pixel_height {
+            self.resize_gpu_handles(gui.device, gui.allocator, pixel_width, pixel_height);
+            self.texture = Some(gui.create_texture(&self.image));
+        }
+
         // Left labels
         for i in 0..=4 {
             let frac = i as f32 / 4.0;
@@ -451,13 +444,8 @@ impl PlotRenderer {
             );
         }
 
-        // Plot
-        let scale = ui.ctx().pixels_per_point();
-        self.width  = (waveform_rect.width() * scale) as u32;
-        self.height  = (waveform_rect.height() * scale) as u32;
-
         painter.image(
-            self.texture.unwrap(),
+            gui.get_texture_id(self.texture.as_ref().unwrap()),
             waveform_rect,
             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), // full UV
             Color32::WHITE,
@@ -505,7 +493,7 @@ impl PlotRenderer {
 
         if response.dragged_by(egui::PointerButton::Primary) {
             let delta = response.drag_delta() * ui.pixels_per_point();
-            let samples_per_pixel = SAMPLES_PER_SECOND as f32 / self.width as f32 * self.zoom;
+            let samples_per_pixel = SAMPLES_PER_SECOND as f32 / self.image.width() as f32 * self.zoom;
             self.sample_offset -= delta.x * samples_per_pixel;
         }
 

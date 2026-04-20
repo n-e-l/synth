@@ -255,7 +255,8 @@ impl RenderComponent for App {
         }
 
         if let Some(played_offset) = &mut self.played_offset {
-            if *played_offset < BUFFER_SAMPLES {
+            // The played offset is x2 as it contains both channels
+            if *played_offset < BUFFER_SAMPLES * 2 {
                 let binding = self.buffer.mapped().unwrap();
                 let gpu_data: &[f32] = cast_slice(binding.as_slice());
                 let remaining = &gpu_data[*played_offset..];

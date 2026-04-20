@@ -52,7 +52,7 @@ void main()
     float size = 30.;
     float sample_dist = p - constants.current_sample / float(constants.samples_per_second);
     if( constants.current_sample != 0 && abs(sample_dist) < units_per_pixel * size && sample_dist < 0. ) {
-        sample_dist = abs(sample_dist);
+        sample_dist = abs(sample_dist) / constants.zoom;
         float t = clamp((sample_dist * constants.pixels_x) / size, 0., 1.);
         float alpha = pow(1. - t, 20.) + 0.03 * (1. - t);
         vec3 playhead_color = vec3(0.0, 0.6, 0.45) * .7;
