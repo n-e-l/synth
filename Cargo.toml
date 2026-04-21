@@ -11,13 +11,11 @@ keywords = ["compute", "vulkan", "render", "engine", "synth"]
 categories = ["rendering::engine"]
 
 [dependencies]
-cen = { git = "https://github.com/n-e-l/cen", rev = "6476f1fc6630ed9bc5a605ce7b6765563a6ba382" }
+cen = { git = "https://github.com/n-e-l/cen", rev = "0215ed296e2469f6339bbc493799a657c084649c" }
 cpal = "0.13.4"
 bytemuck = { version = "1.17.0", features = ["derive"] }
-egui_plot = "0.34.1"
 egui_code_editor = "=0.2.21"
 rfd = "0.17.2"
 ringbuf = "0.4.8"
-minmaxlttb = "0.1.4"
 
 [dev-dependencies]

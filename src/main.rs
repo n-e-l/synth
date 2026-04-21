@@ -5,10 +5,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use cen::graphics::renderer::RenderContext;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use bytemuck::{cast_slice, Pod, Zeroable};
-use cen::app::component::{Component, ComponentRegistry};
+use cen::app::app::{AppComponent, AppConfig};
+use cen::app::Cen;
 use cen::app::engine::InitContext;
 use cen::app::gui::{GuiComponent, GuiHandler};
 use cen::ash::vk;
@@ -102,54 +102,7 @@ struct PushConstants {
     d: f32,
 }
 
-impl App {
-
-    fn load_file(&mut self, path: PathBuf) {
-        self.file_path = Some(path.clone());
-        self.code = fs::read_to_string(path).expect("Failed to read audio file");
-        self.compile = true;
-    }
-
-    fn update_shader(&mut self, ctx: &mut RenderContext) {
-        let descriptor_set_layout = DescriptorSetLayout::new_push_descriptor(
-            ctx.device,
-            &[
-                DescriptorSetLayoutBinding::default()
-                    .binding(0)
-                    .descriptor_type(DescriptorType::STORAGE_BUFFER)
-                    .descriptor_count(1)
-                    .stage_flags(ShaderStageFlags::COMPUTE)
-            ]
-        );
-        let mut macros = HashMap::new();
-        macros.insert("audio_function".to_string(), self.code.clone());
-        let pipeline_config = ComputePipelineConfig {
-            shader_source: PathBuf::from("shaders/audio.comp"),
-            descriptor_set_layouts: vec![ descriptor_set_layout ],
-            push_constant_ranges: vec![
-                PushConstantRange::default()
-                    .stage_flags(ShaderStageFlags::COMPUTE)
-                    .offset(0)
-                    .size(size_of::<PushConstants>() as u32)
-            ],
-            macros,
-        };
-
-        let pipeline = if let Some(pipeline) = self.pipeline {
-            ctx.pipeline_store.write(pipeline, pipeline_config)
-        } else {
-            ctx.pipeline_store.insert(pipeline_config)
-        };
-        match pipeline {
-            Ok(key) => {
-                self.pipeline = Some( key );
-                self.shader_errors = None;
-            }
-            Err(e) => {
-                self.shader_errors = Some( e.to_string() )
-            }
-        }
-    }
+impl AppComponent for App {
 
     fn new(ctx: &mut InitContext) -> Self {
         let default_file = "audio/kick.glsl";
@@ -220,6 +173,56 @@ impl App {
             compile: false,
             file_path: Some(default_file.into()),
             plot: PlotRenderer::new(ctx, buffer)
+        }
+    }
+}
+
+impl App {
+
+    fn load_file(&mut self, path: PathBuf) {
+        self.file_path = Some(path.clone());
+        self.code = fs::read_to_string(path).expect("Failed to read audio file");
+        self.compile = true;
+    }
+
+    fn update_shader(&mut self, ctx: &mut RenderContext) {
+        let descriptor_set_layout = DescriptorSetLayout::new_push_descriptor(
+            ctx.device,
+            &[
+                DescriptorSetLayoutBinding::default()
+                    .binding(0)
+                    .descriptor_type(DescriptorType::STORAGE_BUFFER)
+                    .descriptor_count(1)
+                    .stage_flags(ShaderStageFlags::COMPUTE)
+            ]
+        );
+        let mut macros = HashMap::new();
+        macros.insert("audio_function".to_string(), self.code.clone());
+        let pipeline_config = ComputePipelineConfig {
+            shader_source: PathBuf::from("shaders/audio.comp"),
+            descriptor_set_layouts: vec![ descriptor_set_layout ],
+            push_constant_ranges: vec![
+                PushConstantRange::default()
+                    .stage_flags(ShaderStageFlags::COMPUTE)
+                    .offset(0)
+                    .size(size_of::<PushConstants>() as u32)
+            ],
+            macros,
+        };
+
+        let pipeline = if let Some(pipeline) = self.pipeline {
+            ctx.pipeline_store.write(pipeline, pipeline_config)
+        } else {
+            ctx.pipeline_store.insert(pipeline_config)
+        };
+        match pipeline {
+            Ok(key) => {
+                self.pipeline = Some( key );
+                self.shader_errors = None;
+            }
+            Err(e) => {
+                self.shader_errors = Some( e.to_string() )
+            }
         }
     }
 }
@@ -402,18 +405,13 @@ impl GuiComponent for App {
 }
 
 fn main() {
-    let cen_conf = cen::app::app::AppConfig::default()
-        .width(1200)
-        .height(800)
-        .vsync(true)
-        .fullscreen(false)
-        .resizable(true)
-        .log_fps(true);
-
-    cen::app::Cen::run(cen_conf, Box::new(move |ctx| {
-        let app = Arc::new(Mutex::new(App::new(ctx)));
-        ComponentRegistry::new()
-            .register(Component::Gui(app.clone()))
-            .register(Component::Render(app))
-    }));
+    Cen::<App>::run(
+        AppConfig::default()
+            .width(1200)
+            .height(800)
+            .vsync(true)
+            .fullscreen(false)
+            .resizable(true)
+            .log_fps(true)
+    )
 }
