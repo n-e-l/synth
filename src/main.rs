@@ -18,7 +18,7 @@ use cen::egui::{Context, Slider};
 use cen::gpu_allocator::MemoryLocation;
 use cen::graphics::pipeline_store::{PipelineKey};
 use cen::graphics::renderer::RenderComponent;
-use cen::vulkan::{Buffer, ComputePipelineConfig, DescriptorSetLayout};
+use cen::vulkan::{Buffer, ComputePipelineConfig, DescriptorSetLayout, Device};
 use egui::containers::menu;
 use cpal::{Stream};
 use cpal::traits::StreamTrait;
@@ -34,7 +34,7 @@ const BUFFER_DURATION: f32 = 1f32;
 const BUFFER_SAMPLES: usize = (SAMPLES_PER_SECOND as f32 * BUFFER_DURATION) as usize;
 const AUDIO_BUFFER_SIZE: usize = 1024 * 4;
 
-struct AudioController {
+struct AudioControls {
     frequency: f32,
     volume: f32,
     a: f32,
@@ -74,7 +74,7 @@ impl AudioPlayer {
 struct App
 {
     player: AudioPlayer,
-    controller: AudioController,
+    controls: AudioControls,
     pipeline: Option<PipelineKey>,
     buffer: Buffer,
     code: String,
@@ -105,10 +105,8 @@ struct PushConstants {
 impl AppComponent for App {
 
     fn new(ctx: &mut InitContext) -> Self {
-        let default_file = "audio/kick.glsl";
-        let code = fs::read_to_string(default_file).expect("Failed to read audio file");
 
-        let controller = AudioController {
+        let controls = AudioControls {
             volume: 1.0,
             a: 1.0,
             b: 0.0,
@@ -116,40 +114,18 @@ impl AppComponent for App {
             d: 1.0,
             frequency: 440.,
         };
+
         let player = AudioPlayer::new();
 
-        let descriptor_set_layout = DescriptorSetLayout::new_push_descriptor(
-            ctx.device,
-            &[
-                DescriptorSetLayoutBinding::default()
-                    .binding(0)
-                    .descriptor_type(DescriptorType::STORAGE_BUFFER)
-                    .descriptor_count(1)
-                    .stage_flags(ShaderStageFlags::COMPUTE)
-            ]
-        );
-        let mut macros = HashMap::new();
-        macros.insert("audio_function".to_string(), code.clone());
-        let pipeline_config = ComputePipelineConfig {
-            shader_source: PathBuf::from("shaders/audio.comp"),
-            descriptor_set_layouts: vec![ descriptor_set_layout ],
-            push_constant_ranges: vec![
-                PushConstantRange::default()
-                    .stage_flags(ShaderStageFlags::COMPUTE)
-                    .offset(0)
-                    .size(size_of::<PushConstants>() as u32)
-            ],
-            macros,
-        };
-
         let mut shader_errors = None;
-        let pipeline = match ctx.pipeline_store.insert(pipeline_config) {
-            Ok(p) => { Some(p) }
-            Err(e) => {
-                shader_errors = Some( e.to_string() );
-                None
-            }
-        };
+
+        let default_file = "audio/kick.glsl";
+        let code = fs::read_to_string(default_file).expect("Failed to read audio file");
+
+        let descriptor_set_layout = Self::descriptor_set_layout(ctx.device);
+        let pipeline = ctx.pipeline_store.insert(Self::pipeline_config(descriptor_set_layout, code.clone()))
+            .map_err(|e| shader_errors = Some(e.to_string()))
+            .ok();
 
         let buffer = Buffer::new(
             ctx.device,
@@ -161,7 +137,7 @@ impl AppComponent for App {
 
         Self {
             player,
-            controller,
+            controls,
             pipeline,
             buffer: buffer.clone(),
             code,
@@ -179,15 +155,9 @@ impl AppComponent for App {
 
 impl App {
 
-    fn load_file(&mut self, path: PathBuf) {
-        self.file_path = Some(path.clone());
-        self.code = fs::read_to_string(path).expect("Failed to read audio file");
-        self.compile = true;
-    }
-
-    fn update_shader(&mut self, ctx: &mut RenderContext) {
-        let descriptor_set_layout = DescriptorSetLayout::new_push_descriptor(
-            ctx.device,
+    fn descriptor_set_layout(device: &Device) -> DescriptorSetLayout {
+        DescriptorSetLayout::new_push_descriptor(
+            device,
             &[
                 DescriptorSetLayoutBinding::default()
                     .binding(0)
@@ -195,10 +165,13 @@ impl App {
                     .descriptor_count(1)
                     .stage_flags(ShaderStageFlags::COMPUTE)
             ]
-        );
+        )
+    }
+
+    fn pipeline_config(descriptor_set_layout: DescriptorSetLayout, code: String) -> ComputePipelineConfig {
         let mut macros = HashMap::new();
-        macros.insert("audio_function".to_string(), self.code.clone());
-        let pipeline_config = ComputePipelineConfig {
+        macros.insert("audio_function".to_string(), code.clone());
+        ComputePipelineConfig {
             shader_source: PathBuf::from("shaders/audio.comp"),
             descriptor_set_layouts: vec![ descriptor_set_layout ],
             push_constant_ranges: vec![
@@ -208,13 +181,25 @@ impl App {
                     .size(size_of::<PushConstants>() as u32)
             ],
             macros,
-        };
+        }
+    }
 
-        let pipeline = if let Some(pipeline) = self.pipeline {
-            ctx.pipeline_store.write(pipeline, pipeline_config)
+    fn load_file(&mut self, path: PathBuf) {
+        self.file_path = Some(path.clone());
+        self.code = fs::read_to_string(path).expect("Failed to read audio file");
+        self.compile = true;
+    }
+
+    fn update_shader(&mut self, ctx: &mut RenderContext) {
+        let descriptor_set_layout = Self::descriptor_set_layout(ctx.device);
+        let pipeline_config = Self::pipeline_config(descriptor_set_layout, self.code.clone());
+
+        let pipeline = if let Some(key) = self.pipeline {
+            ctx.pipeline_store.write(key, pipeline_config)
         } else {
             ctx.pipeline_store.insert(pipeline_config)
         };
+
         match pipeline {
             Ok(key) => {
                 self.pipeline = Some( key );
@@ -280,12 +265,12 @@ impl RenderComponent for App {
             time: 0.0,
             samples_per_second: SAMPLES_PER_SECOND as u32,
             total_samples: BUFFER_SAMPLES as u32,
-            frequency: self.controller.frequency,
-            volume: self.controller.volume,
-            a: self.controller.a,
-            b: self.controller.b,
-            c: self.controller.c,
-            d: self.controller.d,
+            frequency: self.controls.frequency,
+            volume: self.controls.volume,
+            a: self.controls.a,
+            b: self.controls.b,
+            c: self.controls.c,
+            d: self.controls.d,
         };
         ctx.command_buffer.push_constants(
             pipeline,
@@ -364,12 +349,12 @@ impl GuiComponent for App {
                 });
 
                 ui.style_mut().spacing.slider_width = 190.;
-                ui.add(Slider::new(&mut self.controller.volume, 0.0..=1.0).text("Volume"));
-                ui.add(Slider::new(&mut self.controller.frequency, 0.0..=1000.0).text("Frequency"));
-                ui.add(Slider::new(&mut self.controller.a, 0.0..=2.0).text("option[0]"));
-                ui.add(Slider::new(&mut self.controller.b, -1.0..=1.0).text("option[1]"));
-                ui.add(Slider::new(&mut self.controller.c, 0.0..=2.0).text("option[2]"));
-                ui.add(Slider::new(&mut self.controller.d, 0.0..=2.0).text("option[3]"));
+                ui.add(Slider::new(&mut self.controls.volume, 0.0..=1.0).text("Volume"));
+                ui.add(Slider::new(&mut self.controls.frequency, 0.0..=1000.0).text("Frequency"));
+                ui.add(Slider::new(&mut self.controls.a, 0.0..=2.0).text("option[0]"));
+                ui.add(Slider::new(&mut self.controls.b, -1.0..=1.0).text("option[1]"));
+                ui.add(Slider::new(&mut self.controls.c, 0.0..=2.0).text("option[2]"));
+                ui.add(Slider::new(&mut self.controls.d, 0.0..=2.0).text("option[3]"));
 
             });
 

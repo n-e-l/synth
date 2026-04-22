@@ -17,15 +17,19 @@ use crate::{BUFFER_DURATION, BUFFER_SAMPLES, SAMPLES_PER_SECOND};
 pub struct PlotRenderer {
     zoom: f32,
     sample_offset: f32,
-    ms_image: Image,
-    image: Image,
-    audio_buffer: Buffer,
-    minmax_buffer: Buffer,
     minmax_pipeline: PipelineKey,
     texture: Option<Texture>,
     graph_pipeline: PipelineKey,
     background_pipeline: PipelineKey,
-    current_sample: usize
+    current_sample: usize,
+    audio_buffer: Buffer,
+    gpu_handles: GpuHandles
+}
+
+struct GpuHandles {
+    image: Image,
+    ms_image: Image,
+    minmax_buffer: Buffer,
 }
 
 #[repr(C)]
@@ -46,49 +50,9 @@ impl PlotRenderer {
         // Image
         let width = 100;
         let height = 100;
-        let image = Image::new(
-            ctx.device,
-            ctx.allocator,
-            ImageConfig {
-                extent: Extent3D {
-                    width,
-                    height,
-                    depth: 1
-                },
-                samples: SampleCountFlags::TYPE_1,
-                filter: Filter::LINEAR,
-                image_usage_flags: ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED,
-                ..Default::default()
-            }
-        );
-
-        let ms_image = Image::new(
-            ctx.device,
-            ctx.allocator,
-            ImageConfig {
-                extent: Extent3D {
-                    width,
-                    height,
-                    depth: 1
-                },
-                samples: SampleCountFlags::TYPE_4,
-                filter: Filter::LINEAR,
-                image_usage_flags: ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::COLOR_ATTACHMENT | ImageUsageFlags::SAMPLED,
-                ..Default::default()
-            }
-        );
-
-        // Buffer
-        let minmax_buffer = Buffer::new(
-            ctx.device,
-            ctx.allocator,
-            MemoryLocation::GpuOnly,
-            (width as usize * size_of::<f32>() * 4) as DeviceSize,
-            BufferUsageFlags::STORAGE_BUFFER | BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::TRANSFER_SRC
-        );
 
         // Pipelines
-        let minmax_pipeline = match ctx.pipeline_store.insert(
+        let minmax_pipeline = ctx.pipeline_store.insert(
             ComputePipelineConfig {
                 shader_source: PathBuf::from("shaders/minmax_audio_pixels.comp"),
                 descriptor_set_layouts: vec![
@@ -116,14 +80,9 @@ impl PlotRenderer {
                 ],
                 macros: HashMap::new()
             }
-        ) {
-            Ok(p) => { p }
-            Err(e) => {
-                panic!( "{}", e )
-            }
-        };
+        ).unwrap_or_else(|e| panic!("{}", e));
 
-        let graph_pipeline = match ctx.pipeline_store.insert(
+        let graph_pipeline = ctx.pipeline_store.insert(
             GraphicsPipelineConfig {
                 vertex_shader_source: PathBuf::from("shaders/audio_plot.vert"),
                 fragment_shader_source: PathBuf::from("shaders/audio_plot.frag"),
@@ -150,14 +109,9 @@ impl PlotRenderer {
                 ],
                 macros: HashMap::new()
             }
-        ) {
-            Ok(p) => { p }
-            Err(e) => {
-                panic!( "{}", e )
-            }
-        };
+        ).unwrap_or_else(|e| panic!("{}", e));
 
-        let background_pipeline = match ctx.pipeline_store.insert(
+        let background_pipeline = ctx.pipeline_store.insert(
             GraphicsPipelineConfig {
                 vertex_shader_source: PathBuf::from("shaders/fullscreen.vert"),
                 fragment_shader_source: PathBuf::from("shaders/audio_background.frag"),
@@ -173,18 +127,11 @@ impl PlotRenderer {
                 ],
                 macros: HashMap::new()
             }
-        ) {
-            Ok(p) => { p }
-            Err(e) => {
-                panic!( "{}", e )
-            }
-        };
+        ).unwrap_or_else(|e| panic!("{}", e));
 
         Self {
+            gpu_handles: Self::create_gpu_handles(ctx.device, ctx.allocator, width, height),
             audio_buffer,
-            image,
-            ms_image,
-            minmax_buffer,
             minmax_pipeline,
             graph_pipeline,
             background_pipeline,
@@ -195,8 +142,8 @@ impl PlotRenderer {
         }
     }
 
-    fn resize_gpu_handles(&mut self, device: &Device, allocator: &mut Allocator, width: u32, height: u32) {
-        self.image = Image::new(
+    fn create_gpu_handles(device: &Device, allocator: &mut Allocator, width: u32, height: u32) -> GpuHandles {
+        let image = Image::new(
             device,
             allocator,
             ImageConfig {
@@ -212,7 +159,7 @@ impl PlotRenderer {
             }
         );
 
-        self.ms_image = Image::new(
+        let ms_image = Image::new(
             device,
             allocator,
             ImageConfig {
@@ -228,13 +175,19 @@ impl PlotRenderer {
             }
         );
 
-        self.minmax_buffer = Buffer::new(
+        let minmax_buffer = Buffer::new(
             device,
             allocator,
             MemoryLocation::GpuOnly,
             (width as usize * size_of::<f32>() * 4) as DeviceSize, // Two floats (min, max) per pixel
             BufferUsageFlags::STORAGE_BUFFER | BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::TRANSFER_SRC
         );
+
+        GpuHandles {
+            image,
+            ms_image,
+            minmax_buffer
+        }
     }
 }
 
@@ -248,8 +201,8 @@ impl RenderComponent for PlotRenderer {
         let push_constants = PushConstants {
             samples_per_seconds: SAMPLES_PER_SECOND as u32,
             total_samples: BUFFER_SAMPLES as u32,
-            pixels_x: self.image.width(),
-            pixels_y: self.image.height(),
+            pixels_x: self.gpu_handles.image.width(),
+            pixels_y: self.gpu_handles.image.height(),
             zoom: self.zoom,
             offset: self.sample_offset as u32,
             current_sample: self.current_sample
@@ -263,7 +216,7 @@ impl RenderComponent for PlotRenderer {
 
         // Manual track as push_descriptor doesn't have support yet for tracking
         ctx.command_buffer.track(&self.audio_buffer);
-        ctx.command_buffer.track(&self.minmax_buffer);
+        ctx.command_buffer.track(&self.gpu_handles.minmax_buffer);
         ctx.command_buffer.push_descriptor_set(
             minmax_pipeline,
             0,
@@ -277,15 +230,15 @@ impl RenderComponent for PlotRenderer {
                     .dst_binding(1)
                     .dst_array_element(0)
                     .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&[self.minmax_buffer.binding()])
+                    .buffer_info(&[self.gpu_handles.minmax_buffer.binding()])
                 ]
         );
 
-        ctx.command_buffer.dispatch( (self.image.width() + 63) / 64, 1, 1);
+        ctx.command_buffer.dispatch( (self.gpu_handles.image.width() + 63) / 64, 1, 1);
 
         // Draw the plot
         ctx.command_buffer.image_barrier(
-            &self.image,
+            &self.gpu_handles.image,
             ImageLayout::UNDEFINED,
             ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             PipelineStageFlags::TOP_OF_PIPE,
@@ -294,7 +247,7 @@ impl RenderComponent for PlotRenderer {
             AccessFlags::SHADER_WRITE
         );
         ctx.command_buffer.image_barrier(
-            &self.ms_image,
+            &self.gpu_handles.ms_image,
             ImageLayout::UNDEFINED,
             ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             PipelineStageFlags::TOP_OF_PIPE,
@@ -303,8 +256,8 @@ impl RenderComponent for PlotRenderer {
             AccessFlags::SHADER_WRITE
         );
 
-        ctx.command_buffer.set_viewport(Viewport{ x: 0f32, y: 0f32, width: self.image.width() as f32, height: self.image.height() as f32, min_depth: 0f32, max_depth: 0f32});
-        ctx.command_buffer.set_scissor(Rect2D { offset: Offset2D::default(), extent: Extent2D { width: self.image.width(), height: self.image.height() }});
+        ctx.command_buffer.set_viewport(Viewport{ x: 0f32, y: 0f32, width: self.gpu_handles.image.width() as f32, height: self.gpu_handles.image.height() as f32, min_depth: 0f32, max_depth: 0f32});
+        ctx.command_buffer.set_scissor(Rect2D { offset: Offset2D::default(), extent: Extent2D { width: self.gpu_handles.image.width(), height: self.gpu_handles.image.height() }});
 
         let color_attachments = vec![
             RenderingAttachmentInfo::default()
@@ -312,13 +265,13 @@ impl RenderComponent for PlotRenderer {
                 .load_op(AttachmentLoadOp::CLEAR)
                 .store_op(AttachmentStoreOp::STORE)
                 .clear_value(ClearValue { color: ClearColorValue { float32: [0f32, 0f32, 0f32, 1f32] } })
-                .image_view(self.ms_image.image_view())
+                .image_view(self.gpu_handles.ms_image.image_view())
                 .resolve_image_layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .resolve_image_view(self.image.image_view())
+                .resolve_image_view(self.gpu_handles.image.image_view())
                 .resolve_mode(ResolveModeFlags::AVERAGE)
         ];
         let rendering_info = vk::RenderingInfoKHR::default()
-            .render_area(Rect2D { offset: Offset2D { x: 0, y: 0 }, extent: Extent2D { width: self.image.width(), height: self.image.height() } })
+            .render_area(Rect2D { offset: Offset2D { x: 0, y: 0 }, extent: Extent2D { width: self.gpu_handles.image.width(), height: self.gpu_handles.image.height() } })
             .layer_count(1)
             .view_mask(0)
             .color_attachments(&color_attachments);
@@ -331,8 +284,8 @@ impl RenderComponent for PlotRenderer {
             let push_constants = PushConstants {
                 samples_per_seconds: SAMPLES_PER_SECOND as u32,
                 total_samples: BUFFER_SAMPLES as u32,
-                pixels_x: self.image.width(),
-                pixels_y: self.image.height(),
+                pixels_x: self.gpu_handles.image.width(),
+                pixels_y: self.gpu_handles.image.height(),
                 zoom: self.zoom,
                 offset: self.sample_offset as u32,
                 current_sample: self.current_sample
@@ -364,16 +317,16 @@ impl RenderComponent for PlotRenderer {
                         .dst_binding(0)
                         .dst_array_element(0)
                         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                        .buffer_info(&[self.minmax_buffer.binding()]),
+                        .buffer_info(&[self.gpu_handles.minmax_buffer.binding()]),
                 ]
             );
 
-            ctx.command_buffer.draw(6, self.image.width(), 0,  0);
+            ctx.command_buffer.draw(6, self.gpu_handles.image.width(), 0,  0);
         }
         ctx.command_buffer.end_rendering();
 
         ctx.command_buffer.image_barrier(
-            &self.image,
+            &self.gpu_handles.image,
             ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             PipelineStageFlags::FRAGMENT_SHADER,
@@ -390,7 +343,7 @@ impl PlotRenderer {
         self.current_sample = current_sample;
 
         if self.texture.is_none() {
-            self.texture = Some(gui.create_texture(&self.image));
+            self.texture = Some(gui.create_texture(&self.gpu_handles.image));
         }
 
         let top_margin = 10.0;
@@ -425,9 +378,9 @@ impl PlotRenderer {
         let scale = ui.ctx().pixels_per_point();
         let pixel_width  = (waveform_rect.width() * scale) as u32;
         let pixel_height  = (waveform_rect.height() * scale) as u32;
-        if self.image.width() != pixel_width || self.image.height() != pixel_height {
-            self.resize_gpu_handles(gui.device, gui.allocator, pixel_width, pixel_height);
-            self.texture = Some(gui.create_texture(&self.image));
+        if self.gpu_handles.image.width() != pixel_width || self.gpu_handles.image.height() != pixel_height {
+            self.gpu_handles = Self::create_gpu_handles(gui.device, gui.allocator, pixel_width, pixel_height);
+            self.texture = Some(gui.create_texture(&self.gpu_handles.image));
         }
 
         // Left labels
@@ -493,7 +446,7 @@ impl PlotRenderer {
 
         if response.dragged_by(egui::PointerButton::Primary) {
             let delta = response.drag_delta() * ui.pixels_per_point();
-            let samples_per_pixel = SAMPLES_PER_SECOND as f32 / self.image.width() as f32 * self.zoom;
+            let samples_per_pixel = SAMPLES_PER_SECOND as f32 / self.gpu_handles.image.width() as f32 * self.zoom;
             self.sample_offset -= delta.x * samples_per_pixel;
         }
 
