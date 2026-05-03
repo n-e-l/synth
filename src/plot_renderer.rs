@@ -12,7 +12,7 @@ use cen::gpu_allocator::MemoryLocation;
 use cen::graphics::{GraphicsContext, ImageContext};
 use cen::graphics::pipeline_store::{PipelineKey};
 use cen::graphics::renderer::{RenderComponent};
-use cen::vulkan::{Allocator, Buffer, ComputePipelineConfig, DescriptorSetLayout, Device, GraphicsPipelineConfig, Image, ImageConfig, ImageTrait};
+use cen::vulkan::{Buffer, ComputePipelineConfig, DescriptorSetLayout, GraphicsPipelineConfig, ImageConfig, ImageTrait};
 use crate::{BUFFER_DURATION, BUFFER_SAMPLES, SAMPLES_PER_SECOND};
 
 pub struct PlotRenderer {
