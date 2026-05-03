@@ -8,12 +8,12 @@ layout( std430, binding = 0 ) buffer AudioBuffer {
 
 layout( push_constant ) uniform PushConstants
 {
+    float[4] options;
     float time;
     int samples_per_second;
     int total_samples;
     float frequency;
     float volume;
-    float[4] options;
 } constants;
 
 audio_function

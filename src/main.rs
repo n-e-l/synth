@@ -126,7 +126,7 @@ impl AppComponent for App {
         let code = fs::read_to_string(default_file).expect("Failed to read audio file");
 
         let descriptor_set_layout = Self::descriptor_set_layout(&ctx.gfx.device);
-        let pipeline = ctx.create_pipeline(Self::pipeline_config(descriptor_set_layout, code.clone()))
+        let pipeline = ctx.create_pipeline(Self::pipeline_config(descriptor_set_layout, "shaders/audio.slang", code.clone()))
             .map_err(|e| shader_errors = Some(e.to_string()))
             .ok();
 
@@ -196,11 +196,18 @@ impl App {
         )
     }
 
-    fn pipeline_config(descriptor_set_layout: DescriptorSetLayout, code: String) -> ComputePipelineConfig {
+    fn pipeline_config(descriptor_set_layout: DescriptorSetLayout, file_name: &str, code: String) -> ComputePipelineConfig {
+
+        let shader_source = if file_name.ends_with("glsl") {
+            PathBuf::from("shaders/audio.comp")
+        } else {
+            PathBuf::from("shaders/audio.slang")
+        };
+
         let mut macros = HashMap::new();
         macros.insert("audio_function".to_string(), code.clone());
         ComputePipelineConfig {
-            shader_source: PathBuf::from("shaders/audio.slang"),
+            shader_source,
             descriptor_set_layouts: vec![ descriptor_set_layout ],
             push_constant_ranges: vec![
                 PushConstantRange::default()
@@ -225,7 +232,7 @@ impl App {
 
     fn update_shader(&mut self, ctx: &mut CenContext) {
         let descriptor_set_layout = Self::descriptor_set_layout(&ctx.gfx.device);
-        let pipeline_config = Self::pipeline_config(descriptor_set_layout, self.code.clone());
+        let pipeline_config = Self::pipeline_config(descriptor_set_layout, self.file_path.as_ref().unwrap().to_str().unwrap(), self.code.clone());
 
         let pipeline = if let Some(key) = self.pipeline {
             // TODO: Make pipeline keys refcounted
