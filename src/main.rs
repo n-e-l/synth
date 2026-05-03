@@ -1,7 +1,7 @@
 pub mod app;
 mod plot_renderer;
 
-use std::collections::HashMap;
+use std::collections::{HashMap};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Instant};
@@ -28,6 +28,7 @@ use ringbuf::consumer::Consumer;
 use ringbuf::producer::Producer;
 use ringbuf::traits::Split;
 use crate::app::cpal_wrapper::StreamFactory;
+use crate::app::syntax::{glsl_syntax, slang_syntax};
 use crate::plot_renderer::PlotRenderer;
 
 const SAMPLES_PER_SECOND: usize = 44800;
@@ -89,6 +90,8 @@ struct App
     plot: PlotRenderer,
     modifiers: ModifiersState,
     last_compile: Option<Instant>,
+    syntax: Syntax,
+    completer: Completer
 }
 
 #[repr(C)]
@@ -138,6 +141,13 @@ impl AppComponent for App {
             BufferUsageFlags::STORAGE_BUFFER
         );
 
+        let syntax = if default_file.ends_with("slang") {
+            slang_syntax()
+        } else {
+            glsl_syntax()
+        };
+        let completer = Completer::new_with_syntax(&syntax).with_user_words();
+
         Self {
             player,
             controls,
@@ -154,6 +164,8 @@ impl AppComponent for App {
             file_path: Some(default_file.into()),
             plot: PlotRenderer::new(ctx, buffer),
             last_compile: None,
+            syntax,
+            completer
         }
     }
 
@@ -225,6 +237,13 @@ impl App {
     }
 
     fn load_file(&mut self, path: PathBuf) {
+        self.syntax = if path.to_str().unwrap().ends_with("slang") {
+            slang_syntax()
+        } else {
+            glsl_syntax()
+        };
+        self.completer = Completer::new_with_syntax(&self.syntax).with_user_words();
+
         self.file_path = Some(path.clone());
         self.code = fs::read_to_string(path.clone()).expect("Failed to read audio file");
         self.compile = true;
@@ -428,16 +447,14 @@ impl GuiComponent for App {
             egui::ScrollArea::vertical()
                 .max_height(available - error_height)
                 .show(ui, |ui| {
-                    let syntax = Syntax::shell();
-                    let mut completer = Completer::new_with_syntax(&syntax).with_user_words();
                     CodeEditor::default()
                         .id_source("code editor")
                         .with_rows(12)
                         .with_fontsize(14.0)
-                        .with_theme(ColorTheme::GRUVBOX)
-                        .with_syntax(syntax.clone())
+                        .with_theme(ColorTheme::GITHUB_DARK)
+                        .with_syntax(self.syntax.clone())
                         .with_numlines(true)
-                        .show_with_completer(ui, &mut self.code, &mut completer);
+                        .show_with_completer(ui, &mut self.code, &mut self.completer);
                 });
 
             ui.add(
@@ -457,7 +474,7 @@ fn main() {
         AppConfig::default()
             .width(1200)
             .height(800)
-            .vsync(true)
+            .vsync(false)
             .fullscreen(false)
             .resizable(true)
             .log_fps(true)
