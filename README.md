@@ -7,6 +7,7 @@ A simple glsl audio editor.
 - audio preview
 - Open/save .glsl files
 - shader compilation with error log
+- Ctrl + Enter to quick-compile
 
 ![preview](./preview.png)
 
@@ -23,7 +24,5 @@ cargo run --release
 
 ## Planned features
 
-- ~~Proper GPU based plot rendering~~
 - Render both left and right audio channel
-- Quick-compile keybind
 - Longer audio sample generation

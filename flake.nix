@@ -37,6 +37,8 @@
 			glslang
 			spirv-tools
 			shaderc
+			mesa
+			shader-slang
 
 			# Wayland
 			wayland
@@ -62,13 +64,14 @@
           ];
 
 		  shellHook = ''
-				export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d"
-				export LD_LIBRARY_PATH="${pkgs.wayland}/lib:${pkgs.libxkbcommon}/lib:${pkgs.vulkan-loader}/lib:$LD_LIBRARY_PATH"
-
-				# Help shaderc-sys find the library
-				export SHADERC_LIB_DIR="${pkgs.shaderc.lib}/lib"
-				export SHADERC_INCLUDE_DIR="${pkgs.shaderc.dev}/include"
-				export PKG_CONFIG_PATH="${pkgs.shaderc}/lib/pkgconfig:$PKG_CONFIG_PATH"
+                export VULKAN_SDK="${pkgs.vulkan-loader}"
+                export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d"
+                export LD_LIBRARY_PATH="${pkgs.wayland}/lib:${pkgs.libxkbcommon}/lib:${pkgs.vulkan-loader}/lib:$LD_LIBRARY_PATH"
+                export SHADERC_LIB_DIR="${pkgs.shaderc.lib}/lib"
+                export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+                export SLANG_LIB_DIR="${pkgs.shader-slang}/lib"
+                export SLANG_INCLUDE_DIR="${pkgs.shader-slang.dev}/include"
+                export BINDGEN_EXTRA_CLANG_ARGS="-isystem ${pkgs.glibc.dev}/include"
           '';
 
   		  PKG_CONFIG_PATH = "${pkgs.alsa-lib.dev}/lib/pkgconfig:${pkgs.jack2}/lib/pkgconfig";

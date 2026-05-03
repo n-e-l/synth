@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use bytemuck::{Pod, Zeroable};
-use cen::app::engine::InitContext;
-use cen::app::gui::GuiHandler;
-use cen::app::Texture;
+use cen::app::engine::CenContext;
+use cen::app::gui::GuiContext;
+use cen::app::{ImageFlags, ImageResource};
 use cen::ash::vk;
 use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Extent3D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, ResolveModeFlags, SampleCountFlags, ShaderStageFlags, Viewport, WriteDescriptorSet};
 use cen::egui;
 use cen::egui::{Color32, Pos2, Rect, Sense, Stroke, Ui};
 use cen::gpu_allocator::MemoryLocation;
+use cen::graphics::{GraphicsContext, ImageContext};
 use cen::graphics::pipeline_store::{PipelineKey};
-use cen::graphics::renderer::{RenderComponent, RenderContext};
+use cen::graphics::renderer::{RenderComponent};
 use cen::vulkan::{Allocator, Buffer, ComputePipelineConfig, DescriptorSetLayout, Device, GraphicsPipelineConfig, Image, ImageConfig, ImageTrait};
 use crate::{BUFFER_DURATION, BUFFER_SAMPLES, SAMPLES_PER_SECOND};
 
@@ -18,7 +19,6 @@ pub struct PlotRenderer {
     zoom: f32,
     sample_offset: f32,
     minmax_pipeline: PipelineKey,
-    texture: Option<Texture>,
     graph_pipeline: PipelineKey,
     background_pipeline: PipelineKey,
     current_sample: usize,
@@ -27,8 +27,8 @@ pub struct PlotRenderer {
 }
 
 struct GpuHandles {
-    image: Image,
-    ms_image: Image,
+    image: ImageResource,
+    ms_image: ImageResource,
     minmax_buffer: Buffer,
 }
 
@@ -45,19 +45,19 @@ struct PushConstants {
 }
 
 impl PlotRenderer {
-    pub fn new(ctx: &mut InitContext, audio_buffer: Buffer) -> Self {
+    pub fn new(ctx: &mut CenContext, audio_buffer: Buffer) -> Self {
 
         // Image
         let width = 100;
         let height = 100;
 
         // Pipelines
-        let minmax_pipeline = ctx.pipeline_store.insert(
+        let minmax_pipeline = ctx.create_pipeline(
             ComputePipelineConfig {
                 shader_source: PathBuf::from("shaders/minmax_audio_pixels.comp"),
                 descriptor_set_layouts: vec![
                     DescriptorSetLayout::new_push_descriptor(
-                        ctx.device,
+                        &ctx.gfx.device,
                         &[
                             DescriptorSetLayoutBinding::default()
                                 .binding(0)
@@ -78,11 +78,11 @@ impl PlotRenderer {
                         .offset(0)
                         .size(size_of::<PushConstants>() as u32)
                 ],
-                macros: HashMap::new()
+                ..Default::default()
             }
         ).unwrap_or_else(|e| panic!("{}", e));
 
-        let graph_pipeline = ctx.pipeline_store.insert(
+        let graph_pipeline = ctx.create_pipeline(
             GraphicsPipelineConfig {
                 vertex_shader_source: PathBuf::from("shaders/audio_plot.vert"),
                 fragment_shader_source: PathBuf::from("shaders/audio_plot.frag"),
@@ -91,7 +91,7 @@ impl PlotRenderer {
                 sample_count: SampleCountFlags::TYPE_4,
                 descriptor_set_layouts: vec![
                     DescriptorSetLayout::new_push_descriptor(
-                        ctx.device,
+                        &ctx.gfx.device,
                         &[
                             DescriptorSetLayoutBinding::default()
                                 .binding(0)
@@ -111,7 +111,7 @@ impl PlotRenderer {
             }
         ).unwrap_or_else(|e| panic!("{}", e));
 
-        let background_pipeline = ctx.pipeline_store.insert(
+        let background_pipeline = ctx.create_pipeline(
             GraphicsPipelineConfig {
                 vertex_shader_source: PathBuf::from("shaders/fullscreen.vert"),
                 fragment_shader_source: PathBuf::from("shaders/audio_background.frag"),
@@ -130,22 +130,20 @@ impl PlotRenderer {
         ).unwrap_or_else(|e| panic!("{}", e));
 
         Self {
-            gpu_handles: Self::create_gpu_handles(ctx.device, ctx.allocator, width, height),
+            gpu_handles: Self::create_gpu_handles(&mut ctx.gfx, &mut ctx.images, width, height),
             audio_buffer,
             minmax_pipeline,
             graph_pipeline,
             background_pipeline,
             zoom: 1.1,
-            texture: None,
             sample_offset: SAMPLES_PER_SECOND as f32 / 2f32,
             current_sample: 0
         }
     }
 
-    fn create_gpu_handles(device: &Device, allocator: &mut Allocator, width: u32, height: u32) -> GpuHandles {
-        let image = Image::new(
-            device,
-            allocator,
+    fn create_gpu_handles(gfx: &mut GraphicsContext, image_context: &mut ImageContext, width: u32, height: u32) -> GpuHandles {
+        let image = image_context.create_image(
+                gfx,
             ImageConfig {
                 extent: Extent3D {
                     width,
@@ -156,12 +154,12 @@ impl PlotRenderer {
                 samples: SampleCountFlags::TYPE_1,
                 filter: Filter::LINEAR,
                 ..Default::default()
-            }
+            },
+            ImageFlags::empty()
         );
 
-        let ms_image = Image::new(
-            device,
-            allocator,
+        let ms_image = image_context.create_image(
+            gfx,
             ImageConfig {
                 extent: Extent3D {
                     width,
@@ -172,12 +170,13 @@ impl PlotRenderer {
                 samples: SampleCountFlags::TYPE_4,
                 filter: Filter::LINEAR,
                 ..Default::default()
-            }
+            },
+            ImageFlags::empty()
         );
 
         let minmax_buffer = Buffer::new(
-            device,
-            allocator,
+            &gfx.device,
+            &mut gfx.allocator,
             MemoryLocation::GpuOnly,
             (width as usize * size_of::<f32>() * 4) as DeviceSize, // Two floats (min, max) per pixel
             BufferUsageFlags::STORAGE_BUFFER | BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::TRANSFER_SRC
@@ -192,17 +191,20 @@ impl PlotRenderer {
 }
 
 impl RenderComponent for PlotRenderer {
-    fn render(&mut self, ctx: &mut RenderContext) {
+    fn render(&mut self, ctx: &mut CenContext) {
 
         // Compute per-pixel min-max values
-        let minmax_pipeline = ctx.pipeline_store.get(self.minmax_pipeline).unwrap();
+        let minmax_pipeline = ctx.pipelines.get(self.minmax_pipeline).unwrap();
         ctx.command_buffer.bind_pipeline(minmax_pipeline);
+
+        let image = ctx.images.get(&self.gpu_handles.image);
+        let ms_image = ctx.images.get(&self.gpu_handles.ms_image);
 
         let push_constants = PushConstants {
             samples_per_seconds: SAMPLES_PER_SECOND as u32,
             total_samples: BUFFER_SAMPLES as u32,
-            pixels_x: self.gpu_handles.image.width(),
-            pixels_y: self.gpu_handles.image.height(),
+            pixels_x: image.width(),
+            pixels_y: image.height(),
             zoom: self.zoom,
             offset: self.sample_offset as u32,
             current_sample: self.current_sample
@@ -234,11 +236,11 @@ impl RenderComponent for PlotRenderer {
                 ]
         );
 
-        ctx.command_buffer.dispatch( (self.gpu_handles.image.width() + 63) / 64, 1, 1);
+        ctx.command_buffer.dispatch( (image.width() + 63) / 64, 1, 1);
 
         // Draw the plot
         ctx.command_buffer.image_barrier(
-            &self.gpu_handles.image,
+            image,
             ImageLayout::UNDEFINED,
             ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             PipelineStageFlags::TOP_OF_PIPE,
@@ -247,7 +249,7 @@ impl RenderComponent for PlotRenderer {
             AccessFlags::SHADER_WRITE
         );
         ctx.command_buffer.image_barrier(
-            &self.gpu_handles.ms_image,
+            ms_image,
             ImageLayout::UNDEFINED,
             ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             PipelineStageFlags::TOP_OF_PIPE,
@@ -256,8 +258,8 @@ impl RenderComponent for PlotRenderer {
             AccessFlags::SHADER_WRITE
         );
 
-        ctx.command_buffer.set_viewport(Viewport{ x: 0f32, y: 0f32, width: self.gpu_handles.image.width() as f32, height: self.gpu_handles.image.height() as f32, min_depth: 0f32, max_depth: 0f32});
-        ctx.command_buffer.set_scissor(Rect2D { offset: Offset2D::default(), extent: Extent2D { width: self.gpu_handles.image.width(), height: self.gpu_handles.image.height() }});
+        ctx.command_buffer.set_viewport(Viewport{ x: 0f32, y: 0f32, width: image.width() as f32, height: image.height() as f32, min_depth: 0f32, max_depth: 0f32});
+        ctx.command_buffer.set_scissor(Rect2D { offset: Offset2D::default(), extent: Extent2D { width: image.width(), height: image.height() }});
 
         let color_attachments = vec![
             RenderingAttachmentInfo::default()
@@ -265,27 +267,27 @@ impl RenderComponent for PlotRenderer {
                 .load_op(AttachmentLoadOp::CLEAR)
                 .store_op(AttachmentStoreOp::STORE)
                 .clear_value(ClearValue { color: ClearColorValue { float32: [0f32, 0f32, 0f32, 1f32] } })
-                .image_view(self.gpu_handles.ms_image.image_view())
+                .image_view(ms_image.image_view())
                 .resolve_image_layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .resolve_image_view(self.gpu_handles.image.image_view())
+                .resolve_image_view(image.image_view())
                 .resolve_mode(ResolveModeFlags::AVERAGE)
         ];
         let rendering_info = vk::RenderingInfoKHR::default()
-            .render_area(Rect2D { offset: Offset2D { x: 0, y: 0 }, extent: Extent2D { width: self.gpu_handles.image.width(), height: self.gpu_handles.image.height() } })
+            .render_area(Rect2D { offset: Offset2D { x: 0, y: 0 }, extent: Extent2D { width: image.width(), height: image.height() } })
             .layer_count(1)
             .view_mask(0)
             .color_attachments(&color_attachments);
         ctx.command_buffer.begin_rendering(&rendering_info);
         {
             // Background
-            let background_pipeline = ctx.pipeline_store.get(self.background_pipeline).unwrap();
+            let background_pipeline = ctx.pipelines.get(self.background_pipeline).unwrap();
             ctx.command_buffer.bind_pipeline(background_pipeline);
 
             let push_constants = PushConstants {
                 samples_per_seconds: SAMPLES_PER_SECOND as u32,
                 total_samples: BUFFER_SAMPLES as u32,
-                pixels_x: self.gpu_handles.image.width(),
-                pixels_y: self.gpu_handles.image.height(),
+                pixels_x: image.width(),
+                pixels_y: image.height(),
                 zoom: self.zoom,
                 offset: self.sample_offset as u32,
                 current_sample: self.current_sample
@@ -299,7 +301,7 @@ impl RenderComponent for PlotRenderer {
             ctx.command_buffer.draw(6, 1, 0,  0);
 
             // Graph
-            let graph_pipeline = ctx.pipeline_store.get(self.graph_pipeline).unwrap();
+            let graph_pipeline = ctx.pipelines.get(self.graph_pipeline).unwrap();
             ctx.command_buffer.bind_pipeline(graph_pipeline);
 
             ctx.command_buffer.push_constants(
@@ -321,12 +323,12 @@ impl RenderComponent for PlotRenderer {
                 ]
             );
 
-            ctx.command_buffer.draw(6, self.gpu_handles.image.width(), 0,  0);
+            ctx.command_buffer.draw(6, image.width(), 0,  0);
         }
         ctx.command_buffer.end_rendering();
 
         ctx.command_buffer.image_barrier(
-            &self.gpu_handles.image,
+            image,
             ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             PipelineStageFlags::FRAGMENT_SHADER,
@@ -338,13 +340,9 @@ impl RenderComponent for PlotRenderer {
 }
 
 impl PlotRenderer {
-    pub fn ui(&mut self, gui: &mut GuiHandler, ui: &mut Ui, current_sample: usize) {
+    pub fn ui(&mut self, gui: &mut GuiContext, ui: &mut Ui, current_sample: usize) {
 
         self.current_sample = current_sample;
-
-        if self.texture.is_none() {
-            self.texture = Some(gui.create_texture(&self.gpu_handles.image));
-        }
 
         let top_margin = 10.0;
         let label_width = 30.0;  // left axis
@@ -378,9 +376,10 @@ impl PlotRenderer {
         let scale = ui.ctx().pixels_per_point();
         let pixel_width  = (waveform_rect.width() * scale) as u32;
         let pixel_height  = (waveform_rect.height() * scale) as u32;
-        if self.gpu_handles.image.width() != pixel_width || self.gpu_handles.image.height() != pixel_height {
-            self.gpu_handles = Self::create_gpu_handles(gui.device, gui.allocator, pixel_width, pixel_height);
-            self.texture = Some(gui.create_texture(&self.gpu_handles.image));
+
+        let current_extent = gui.images.get(&self.gpu_handles.image).extent();
+        if current_extent.width != pixel_width || current_extent.height != pixel_height {
+            self.gpu_handles = Self::create_gpu_handles(&mut gui.gfx, &mut gui.images, pixel_width, pixel_height);
         }
 
         // Left labels
@@ -398,15 +397,15 @@ impl PlotRenderer {
         }
 
         painter.image(
-            gui.get_texture_id(self.texture.as_ref().unwrap()),
+            gui.get_texture(&mut self.gpu_handles.image),
             waveform_rect,
             Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), // full UV
             Color32::WHITE,
         );
 
         // bottom timescale
-        let view_start = (self.sample_offset as f32 - SAMPLES_PER_SECOND as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
-        let view_end   = (self.sample_offset as f32 + SAMPLES_PER_SECOND as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
+        let view_start = (self.sample_offset - SAMPLES_PER_SECOND as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
+        let view_end   = (self.sample_offset + SAMPLES_PER_SECOND as f32 * self.zoom * 0.5) / SAMPLES_PER_SECOND as f32;
         let view_range = view_end - view_start;
 
         let rough_step = view_range / 8.0;
@@ -446,7 +445,7 @@ impl PlotRenderer {
 
         if response.dragged_by(egui::PointerButton::Primary) {
             let delta = response.drag_delta() * ui.pixels_per_point();
-            let samples_per_pixel = SAMPLES_PER_SECOND as f32 / self.gpu_handles.image.width() as f32 * self.zoom;
+            let samples_per_pixel = SAMPLES_PER_SECOND as f32 / pixel_width as f32 * self.zoom;
             self.sample_offset -= delta.x * samples_per_pixel;
         }
 

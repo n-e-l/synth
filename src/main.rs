@@ -4,13 +4,12 @@ mod plot_renderer;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use cen::graphics::renderer::RenderContext;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use bytemuck::{cast_slice, Pod, Zeroable};
 use cen::app::app::{AppComponent, AppConfig};
 use cen::app::Cen;
-use cen::app::engine::InitContext;
-use cen::app::gui::{GuiComponent, GuiHandler};
+use cen::app::engine::CenContext;
+use cen::app::gui::{GuiComponent, GuiContext};
 use cen::ash::vk;
 use cen::ash::vk::{BufferUsageFlags, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, PushConstantRange, ShaderStageFlags, WriteDescriptorSet};
 use cen::egui;
@@ -18,7 +17,9 @@ use cen::egui::{Context, Slider};
 use cen::gpu_allocator::MemoryLocation;
 use cen::graphics::pipeline_store::{PipelineKey};
 use cen::graphics::renderer::RenderComponent;
-use cen::vulkan::{Buffer, ComputePipelineConfig, DescriptorSetLayout, Device};
+use cen::vulkan::{Buffer, ComputePipelineConfig, DescriptorSetLayout, Device, SlangModule};
+use cen::winit::event::{ElementState, KeyEvent, Modifiers, WindowEvent};
+use cen::winit::keyboard::{Key, ModifiersState, NamedKey};
 use egui::containers::menu;
 use cpal::{Stream};
 use cpal::traits::StreamTrait;
@@ -85,26 +86,28 @@ struct App
     repeat_play: bool,
     played_offset: Option<usize>,
     start_time: Option<Instant>,
-    plot: PlotRenderer
+    plot: PlotRenderer,
+    modifiers: ModifiersState,
+    last_compile: Option<Instant>,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct PushConstants {
+    a: f32,
+    b: f32,
+    c: f32,
+    d: f32,
     time: f32,
     samples_per_second: u32,
     total_samples: u32,
     frequency: f32,
     volume: f32,
-    a: f32,
-    b: f32,
-    c: f32,
-    d: f32,
 }
 
 impl AppComponent for App {
 
-    fn new(ctx: &mut InitContext) -> Self {
+    fn new(ctx: &mut CenContext) -> Self {
 
         let controls = AudioControls {
             volume: 1.0,
@@ -119,17 +122,17 @@ impl AppComponent for App {
 
         let mut shader_errors = None;
 
-        let default_file = "audio/kick.glsl";
+        let default_file = "audio/sine.slang";
         let code = fs::read_to_string(default_file).expect("Failed to read audio file");
 
-        let descriptor_set_layout = Self::descriptor_set_layout(ctx.device);
-        let pipeline = ctx.pipeline_store.insert(Self::pipeline_config(descriptor_set_layout, code.clone()))
+        let descriptor_set_layout = Self::descriptor_set_layout(&ctx.gfx.device);
+        let pipeline = ctx.create_pipeline(Self::pipeline_config(descriptor_set_layout, code.clone()))
             .map_err(|e| shader_errors = Some(e.to_string()))
             .ok();
 
         let buffer = Buffer::new(
-            ctx.device,
-            ctx.allocator,
+            &ctx.gfx.device,
+            &mut ctx.gfx.allocator,
             MemoryLocation::GpuToCpu,
             size_of::<f32>() as DeviceSize * 2 * BUFFER_SAMPLES as u64,
             BufferUsageFlags::STORAGE_BUFFER
@@ -143,12 +146,37 @@ impl AppComponent for App {
             code,
             play: false,
             repeat_play: false,
+            modifiers: Default::default(),
             played_offset: None,
             start_time: None,
             shader_errors,
             compile: false,
             file_path: Some(default_file.into()),
-            plot: PlotRenderer::new(ctx, buffer)
+            plot: PlotRenderer::new(ctx, buffer),
+            last_compile: None,
+        }
+    }
+
+    fn window_event(&mut self, event: WindowEvent) {
+        match event {
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.state();
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                KeyEvent {
+                    logical_key: key,
+                    state: ElementState::Pressed,
+                    ..
+                },
+                ..
+            } => match key.as_ref() {
+                Key::Named(NamedKey::Enter) if self.modifiers.control_key() => {
+                    self.compile = true;
+                },
+                _ => {}
+            },
+            _ => {}
         }
     }
 }
@@ -172,7 +200,7 @@ impl App {
         let mut macros = HashMap::new();
         macros.insert("audio_function".to_string(), code.clone());
         ComputePipelineConfig {
-            shader_source: PathBuf::from("shaders/audio.comp"),
+            shader_source: PathBuf::from("shaders/audio.slang"),
             descriptor_set_layouts: vec![ descriptor_set_layout ],
             push_constant_ranges: vec![
                 PushConstantRange::default()
@@ -181,23 +209,29 @@ impl App {
                     .size(size_of::<PushConstants>() as u32)
             ],
             macros,
+            slang_modules: vec![SlangModule {
+                name: "user_audio".to_string(),
+                source: code
+            }],
+            ..Default::default()
         }
     }
 
     fn load_file(&mut self, path: PathBuf) {
         self.file_path = Some(path.clone());
-        self.code = fs::read_to_string(path).expect("Failed to read audio file");
+        self.code = fs::read_to_string(path.clone()).expect("Failed to read audio file");
         self.compile = true;
     }
 
-    fn update_shader(&mut self, ctx: &mut RenderContext) {
-        let descriptor_set_layout = Self::descriptor_set_layout(ctx.device);
+    fn update_shader(&mut self, ctx: &mut CenContext) {
+        let descriptor_set_layout = Self::descriptor_set_layout(&ctx.gfx.device);
         let pipeline_config = Self::pipeline_config(descriptor_set_layout, self.code.clone());
 
         let pipeline = if let Some(key) = self.pipeline {
-            ctx.pipeline_store.write(key, pipeline_config)
+            // TODO: Make pipeline keys refcounted
+            ctx.pipelines.pipeline_store.write(key, pipeline_config)
         } else {
-            ctx.pipeline_store.insert(pipeline_config)
+            ctx.pipelines.create_pipeline(pipeline_config)
         };
 
         match pipeline {
@@ -209,11 +243,13 @@ impl App {
                 self.shader_errors = Some( e.to_string() )
             }
         }
+
+        self.last_compile = Some(Instant::now())
     }
 }
 
 impl RenderComponent for App {
-    fn render(&mut self, ctx: &mut RenderContext<'_>) {
+    fn render(&mut self, ctx: &mut CenContext<'_>) {
 
         if self.compile {
             self.compile = false;
@@ -258,7 +294,7 @@ impl RenderComponent for App {
         }
 
         // Calculate audio
-        let pipeline = ctx.pipeline_store.get(self.pipeline.unwrap()).unwrap();
+        let pipeline = ctx.pipelines.pipeline_store.get(self.pipeline.unwrap()).unwrap();
         ctx.command_buffer.bind_pipeline(pipeline);
 
         let push_constants = PushConstants {
@@ -299,7 +335,7 @@ impl RenderComponent for App {
 }
 
 impl GuiComponent for App {
-    fn gui(&mut self, gui_handler: &mut GuiHandler, ctx: &Context) {
+    fn gui(&mut self, gui_handler: &mut GuiContext, ctx: &Context) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             menu::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -341,7 +377,27 @@ impl GuiComponent for App {
                         self.play = true;
                     }
                     ui.checkbox(&mut self.repeat_play, "Repeat");
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if let Some(t) = self.last_compile {
+                            let elapsed = t.elapsed().as_secs_f32();
+                            const FADE_TIME: f32 = 0.5;
+                            if elapsed < FADE_TIME {
+                                let default = ui.visuals().widgets.inactive.weak_bg_fill;
+                                let orange = egui::Color32::from_rgb(241, 121, 25);
+                                let t = (FADE_TIME - elapsed) / FADE_TIME;
+
+                                let lerp = |a: u8, b: u8| -> u8 { (a as f32 + (b as f32 - a as f32) * t) as u8 };
+                                let color = egui::Color32::from_rgb(
+                                    lerp(default.r(), orange.r()),
+                                    lerp(default.g(), orange.g()),
+                                    lerp(default.b(), orange.b()),
+                                );
+                                ui.visuals_mut().widgets.inactive.weak_bg_fill = color;
+                                ui.visuals_mut().widgets.hovered.weak_bg_fill = color;
+                            }
+                        }
+
                         if ui.button("compile").clicked() {
                             self.compile = true;
                         }
