@@ -1,9 +1,7 @@
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::{PI};
 use std::ops::{Add, RangeInclusive, Sub};
-use cen::egui;
 use cen::egui::{Align2, Color32, FontId, Painter, Pos2, Response, Sense, Stroke, Ui, Vec2, Widget};
 use cen::egui::epaint::PathShape;
-use log::info;
 
 pub struct Knob<'a> {
     value: &'a mut f32,
@@ -78,7 +76,7 @@ impl Widget for Knob<'_> {
         let rel_value = ( *self.value - self.range.start() ) / self.range.end();
         let start_angle = 1.5 * PI / 2f32;
         let end_angle = start_angle + rel_value * 1.5 * PI;
-        painter.line(vec![pot_center, pot_center.add(inner_radius * Vec2::new(f32::cos(end_angle), f32::sin(end_angle)))], visuals.fg_stroke);;
+        painter.line(vec![pot_center, pot_center.add(inner_radius * Vec2::new(f32::cos(end_angle), f32::sin(end_angle)))], visuals.fg_stroke);
 
         filled_arc(&painter, pot_center, radius - 3f32, radius, start_angle, end_angle, Color32::ORANGE);
         filled_arc(&painter, pot_center, radius - 3f32, radius, end_angle, start_angle + 1.5 * PI, Color32::from_rgba_unmultiplied(50, 50, 50, 255));
