@@ -336,7 +336,8 @@ impl RenderComponent for PlotRenderer {
                 ]
             );
 
-            ctx.command_buffer.draw(6, image.width(), 0,  0);
+            // -1 to stop wrapping bug
+            ctx.command_buffer.draw(6, image.width() - 1, 0,  0);
         }
         ctx.command_buffer.end_rendering();
 
