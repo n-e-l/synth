@@ -35,9 +35,11 @@ void main()
     float samples_per_pixel = constants.zoom * constants.samples_per_second / float(constants.pixels_x);
     float pixel_size_y = 2.0 / constants.pixels_y;
 
+    // The pixel time expressed in individual samples
     float sample_time = constants.offset - constants.samples_per_second * constants.zoom / 2. + pixel * samples_per_pixel;
+
     int start_sample = int(floor(sample_time));
-    int end_sample = int(ceil(sample_time + samples_per_pixel));
+    int end_sample = int(floor(sample_time + samples_per_pixel));
 
     // Invalid sample as default
     vec2 minmax = vec2(1., -1.); // Min bigger than max
@@ -47,16 +49,18 @@ void main()
 
     if (start_sample >= 0 && end_sample < int(constants.total_samples)) {
         minmax = vec2(100., -100.);
-        for (int i = start_sample; i < end_sample; i++) {
+        for (int i = start_sample; i <= end_sample; i++) {
             float s = audio_data.data[i].x;
             minmax[0] = min(minmax[0], s);
             minmax[1] = max(minmax[1], s);
         }
 
+
         float a = audio_data.data[start_sample].x;
-        float b = audio_data.data[end_sample].x;  // end_sample-1 to be safe
+        float b = audio_data.data[end_sample].x;
         if (a < b) direction = 1;
         if (a > b) direction = 2;
+        if( (minmax[0] != a && minmax[0] != b) || (minmax[1] != a && minmax[1] != b) ) direction = 0;
         sample_index = uint(start_sample);
     }
 
