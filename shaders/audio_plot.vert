@@ -61,7 +61,6 @@ void main()
         // Move the bottom pixel right by half a pixel
         x_offset = -(vertex_p.y * 2. - 1.) * pixelwidth / 2.;
     }
-    x_offset *= 1.;
 
     float height = max(maximum - minimum, pixelheight * 1.);
     vec2 pos = vec2(x + x_offset, minimum) + vertex_p * vec2(pixelwidth, height);

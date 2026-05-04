@@ -35,8 +35,9 @@ void main()
     float samples_per_pixel = constants.zoom * constants.samples_per_second / float(constants.pixels_x);
     float pixel_size_y = 2.0 / constants.pixels_y;
 
-    int start_sample = int(floor(constants.offset - constants.samples_per_second * constants.zoom / 2. + pixel * samples_per_pixel));
-    int end_sample = int(ceil(start_sample + samples_per_pixel) + 1); // Add 1 to not have any gaps
+    float sample_time = constants.offset - constants.samples_per_second * constants.zoom / 2. + pixel * samples_per_pixel;
+    int start_sample = int(floor(sample_time));
+    int end_sample = int(ceil(sample_time + samples_per_pixel));
 
     // Invalid sample as default
     vec2 minmax = vec2(1., -1.); // Min bigger than max

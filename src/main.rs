@@ -24,6 +24,7 @@ use egui::containers::menu;
 use cpal::{Stream};
 use cpal::traits::StreamTrait;
 use egui_code_editor::{CodeEditor, ColorTheme, Completer, Syntax};
+use log::info;
 use ringbuf::consumer::Consumer;
 use ringbuf::producer::Producer;
 use ringbuf::traits::Split;
@@ -115,11 +116,11 @@ impl AppComponent for App {
 
         let controls = AudioControls {
             volume: 1.0,
-            a: 1.0,
-            b: 0.0,
+            a: 0.02,
+            b: 0.5,
             c: 1.0,
             d: 1.0,
-            frequency: 440.,
+            frequency: 0.15,
         };
 
         let player = AudioPlayer::new();
@@ -310,6 +311,10 @@ impl RenderComponent for App {
             if *played_offset < BUFFER_SAMPLES * 2 {
                 let binding = self.buffer.mapped().unwrap();
                 let gpu_data: &[f32] = cast_slice(binding.as_slice());
+                // for i in 0..400 {
+                //     info!("{}", gpu_data[i * 2]);
+                // }
+                // info!("break");
                 let remaining = &gpu_data[*played_offset..];
                 let count = self.player.producer.push_slice(remaining);
                 *played_offset += count;
@@ -432,6 +437,11 @@ impl GuiComponent for App {
                 });
 
                 ui.horizontal(|ui| {
+                    let knob_size = (20.0 + 2.0) * 2.0; // (radius + padding) * 2
+                    let n = 6.0f32;
+                    let total = knob_size * n + ui.spacing().item_spacing.x * (n - 1.0);
+                    let offset = (ui.available_width() - total) / 2.0;
+                    if offset > 0.0 { ui.add_space(offset); }
                     ui.add(Knob::new(&mut self.controls.volume, 0f32..=1f32).text("Volume"));
                     ui.add(Knob::new(&mut self.controls.frequency, 0f32..=1f32).text("Freq"));
                     ui.add(Knob::new(&mut self.controls.a, 0f32..=1f32).text("opt[0]"));
