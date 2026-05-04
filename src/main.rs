@@ -28,6 +28,7 @@ use ringbuf::consumer::Consumer;
 use ringbuf::producer::Producer;
 use ringbuf::traits::Split;
 use crate::app::cpal_wrapper::StreamFactory;
+use crate::app::knob::Knob;
 use crate::app::syntax::{glsl_syntax, slang_syntax};
 use crate::plot_renderer::PlotRenderer;
 
@@ -160,7 +161,7 @@ impl AppComponent for App {
             played_offset: None,
             start_time: None,
             shader_errors,
-            compile: false,
+            compile: true,
             file_path: Some(default_file.into()),
             plot: PlotRenderer::new(ctx, buffer),
             last_compile: None,
@@ -430,13 +431,14 @@ impl GuiComponent for App {
                     });
                 });
 
-                ui.style_mut().spacing.slider_width = 190.;
-                ui.add(Slider::new(&mut self.controls.volume, 0.0..=1.0).text("Volume"));
-                ui.add(Slider::new(&mut self.controls.frequency, 0.0..=1000.0).text("Frequency"));
-                ui.add(Slider::new(&mut self.controls.a, 0.0..=2.0).text("option[0]"));
-                ui.add(Slider::new(&mut self.controls.b, -1.0..=1.0).text("option[1]"));
-                ui.add(Slider::new(&mut self.controls.c, 0.0..=2.0).text("option[2]"));
-                ui.add(Slider::new(&mut self.controls.d, 0.0..=2.0).text("option[3]"));
+                ui.horizontal(|ui| {
+                    ui.add(Knob::new(&mut self.controls.volume, 0f32..=1f32).text("Volume"));
+                    ui.add(Knob::new(&mut self.controls.frequency, 0f32..=1f32).text("Freq"));
+                    ui.add(Knob::new(&mut self.controls.a, 0f32..=1f32).text("opt[0]"));
+                    ui.add(Knob::new(&mut self.controls.b, 0f32..=1f32).text("opt[1]"));
+                    ui.add(Knob::new(&mut self.controls.c, 0f32..=1f32).text("opt[2]"));
+                    ui.add(Knob::new(&mut self.controls.d, 0f32..=1f32).text("opt[3]"));
+                });
 
             });
 

@@ -24,6 +24,6 @@ float3 palette(float t, float3 a, float3 b, float3 c, float3 d)
 void main(uint3 id : SV_DispatchThreadID)
 {
     int i = int( id.x );
-    if( i > total_samples ) return;
+    if( i >= total_samples ) return;
     audio_data[i] = audio(time + float( i ) / samples_per_second, volume, frequency, options);
 }

@@ -3,6 +3,6 @@ static const float PI  = 3.14159265358979323846;
 
 float2 audio(float t, float volume, float frequency, float4 options)
 {
-    float s = sin(t * frequency * TAU) * volume;
+    float s = sin(options[0] * t * 500) * sin(t * frequency * 8000 * TAU) * volume;
     return float2(s);
 }

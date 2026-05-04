@@ -5,7 +5,7 @@ use cen::app::engine::CenContext;
 use cen::app::gui::GuiContext;
 use cen::app::{ImageFlags, ImageResource};
 use cen::ash::vk;
-use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Extent3D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, ResolveModeFlags, SampleCountFlags, ShaderStageFlags, Viewport, WriteDescriptorSet};
+use cen::ash::vk::{AccessFlags, AttachmentLoadOp, AttachmentStoreOp, BufferUsageFlags, ClearColorValue, ClearValue, DependencyFlags, DescriptorSetLayoutBinding, DescriptorType, DeviceSize, Extent2D, Extent3D, Filter, Format, ImageLayout, ImageUsageFlags, Offset2D, PipelineStageFlags, PushConstantRange, Rect2D, RenderingAttachmentInfo, ResolveModeFlags, SampleCountFlags, ShaderStageFlags, Viewport, WriteDescriptorSet};
 use cen::egui;
 use cen::egui::{Color32, Pos2, Rect, Sense, Stroke, Ui};
 use cen::gpu_allocator::MemoryLocation;
@@ -219,6 +219,7 @@ impl RenderComponent for PlotRenderer {
         // Manual track as push_descriptor doesn't have support yet for tracking
         ctx.command_buffer.track(&self.audio_buffer);
         ctx.command_buffer.track(&self.gpu_handles.minmax_buffer);
+
         ctx.command_buffer.push_descriptor_set(
             minmax_pipeline,
             0,
@@ -238,24 +239,36 @@ impl RenderComponent for PlotRenderer {
 
         ctx.command_buffer.dispatch( (image.width() + 63) / 64, 1, 1);
 
+        // Transition minmax
+        ctx.command_buffer.buffer_barrier(
+            PipelineStageFlags::COMPUTE_SHADER,
+            PipelineStageFlags::FRAGMENT_SHADER,
+            AccessFlags::SHADER_WRITE,
+            AccessFlags::SHADER_READ,
+            DependencyFlags::empty(),
+            self.gpu_handles.minmax_buffer.size(),
+            0,
+            &self.gpu_handles.minmax_buffer
+        );
+
         // Draw the plot
         ctx.command_buffer.image_barrier(
             image,
             ImageLayout::UNDEFINED,
             ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             PipelineStageFlags::TOP_OF_PIPE,
-            PipelineStageFlags::FRAGMENT_SHADER,
+            PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
             AccessFlags::NONE,
-            AccessFlags::SHADER_WRITE
+            AccessFlags::COLOR_ATTACHMENT_WRITE
         );
         ctx.command_buffer.image_barrier(
             ms_image,
             ImageLayout::UNDEFINED,
             ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             PipelineStageFlags::TOP_OF_PIPE,
-            PipelineStageFlags::FRAGMENT_SHADER,
+            PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
             AccessFlags::NONE,
-            AccessFlags::SHADER_WRITE
+            AccessFlags::COLOR_ATTACHMENT_WRITE
         );
 
         ctx.command_buffer.set_viewport(Viewport{ x: 0f32, y: 0f32, width: image.width() as f32, height: image.height() as f32, min_depth: 0f32, max_depth: 0f32});
@@ -331,9 +344,9 @@ impl RenderComponent for PlotRenderer {
             image,
             ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            PipelineStageFlags::FRAGMENT_SHADER,
+            PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
             PipelineStageFlags::BOTTOM_OF_PIPE,
-            AccessFlags::SHADER_WRITE,
+            AccessFlags::COLOR_ATTACHMENT_WRITE,
             AccessFlags::NONE
         );
     }
