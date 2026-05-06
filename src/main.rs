@@ -2,6 +2,7 @@ pub mod app;
 mod plot_renderer;
 
 use std::collections::{HashMap};
+use std::f32::consts::PI;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Instant};
@@ -383,6 +384,30 @@ impl GuiComponent for App {
                         }
                     }
                 });
+                ui.menu_button("Export", |ui| {
+                    if ui.button("Wav").clicked() {
+                        let spec = hound::WavSpec {
+                            channels: 2,
+                            sample_rate: SAMPLES_PER_SECOND as u32,
+                            bits_per_sample: 16,
+                            sample_format: hound::SampleFormat::Int,
+                        };
+
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_directory(std::env::current_dir().unwrap())
+                            .save_file() {
+                            let mut writer = hound::WavWriter::create(path, spec).unwrap();
+                            let data = self.buffer.mapped().unwrap();
+                            let audio: &[[f32; 2]] = cast_slice(&data.as_slice());
+                            for s in audio {
+                                let amplitude = i16::MAX as f32;
+                                writer.write_sample((s[0] * amplitude) as i16).unwrap();
+                                writer.write_sample((s[1] * amplitude) as i16).unwrap();
+                            }
+                            writer.finalize().unwrap();
+                        }
+                    }
+                });
                 let label: String = if let Some(path) = &self.file_path {
                     path.to_str().unwrap().to_string()
                 } else { "Example".to_string() };
@@ -448,7 +473,6 @@ impl GuiComponent for App {
                     ui.add(Knob::new(&mut self.controls.c, 0f32..=1f32).text("opt[2]"));
                     ui.add(Knob::new(&mut self.controls.d, 0f32..=1f32).text("opt[3]"));
                 });
-
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
