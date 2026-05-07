@@ -19,5 +19,6 @@ rfd = "0.17.2"
 ringbuf = "0.4.8"
 log = "0.4.28"
 hound = "3.5.1"
+notify-debouncer-mini = "0.4.1"
 
 [dev-dependencies]

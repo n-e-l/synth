@@ -4,8 +4,10 @@ mod plot_renderer;
 use std::collections::{HashMap};
 use std::f32::consts::PI;
 use std::fs;
-use std::path::PathBuf;
-use std::time::{Instant};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::sync::mpsc::Sender;
+use std::time::{Duration, Instant};
 use bytemuck::{cast_slice, Pod, Zeroable};
 use cen::app::app::{AppComponent, AppConfig};
 use cen::app::Cen;
@@ -25,6 +27,10 @@ use egui::containers::menu;
 use cpal::{Stream};
 use cpal::traits::StreamTrait;
 use egui_code_editor::{CodeEditor, ColorTheme, Completer, Syntax};
+use log::error;
+use notify_debouncer_mini::DebouncedEventKind::Any;
+use notify_debouncer_mini::DebounceEventResult;
+use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use ringbuf::consumer::Consumer;
 use ringbuf::producer::Producer;
 use ringbuf::traits::Split;
@@ -93,7 +99,10 @@ struct App
     modifiers: ModifiersState,
     last_compile: Option<Instant>,
     syntax: Syntax,
-    completer: Completer
+    completer: Completer,
+    watcher: notify_debouncer_mini::Debouncer<RecommendedWatcher>,
+    shader_write_listener: mpsc::Receiver<String>,
+    show_code: bool
 }
 
 #[repr(C)]
@@ -150,6 +159,18 @@ impl AppComponent for App {
         };
         let completer = Completer::new_with_syntax(&syntax).with_user_words();
 
+        // Register file watching for the shaders
+        let (tx, rx) = mpsc::channel::<String>();
+        let mut watcher = notify_debouncer_mini::new_debouncer(
+            Duration::from_millis(250),
+            Self::watch_callback(tx)
+        ).expect("Failed to create file watcher");
+
+        // Watch the default shader
+        watcher.watcher().watch(Path::new(default_file), RecursiveMode::Recursive).unwrap_or_else(|_|{
+            panic!("Failed to find path {:?}", default_file);
+        });
+
         Self {
             player,
             controls,
@@ -167,7 +188,10 @@ impl AppComponent for App {
             plot: PlotRenderer::new(ctx, buffer),
             last_compile: None,
             syntax,
-            completer
+            completer,
+            watcher,
+            shader_write_listener: rx,
+            show_code: true
         }
     }
 
@@ -239,6 +263,11 @@ impl App {
     }
 
     fn load_file(&mut self, path: PathBuf) {
+        // Unwatch previous path
+        if let Some(path) = &self.file_path {
+            self.watcher.watcher().unwatch(path.as_path());
+        }
+
         self.syntax = if path.to_str().unwrap().ends_with("slang") {
             slang_syntax()
         } else {
@@ -246,11 +275,17 @@ impl App {
         };
         self.completer = Completer::new_with_syntax(&self.syntax).with_user_words();
 
+        // Watch for file changes
+        self.watcher.watcher().watch(path.as_path(), RecursiveMode::Recursive).unwrap_or_else(|_|{
+            panic!("Failed to find path {:?}", path.as_path());
+        });
+
         self.file_path = Some(path.clone());
         self.code = fs::read_to_string(path.clone()).expect("Failed to read audio file");
         self.compile = true;
     }
 
+    /// Recompiles the shader with the code
     fn update_shader(&mut self, ctx: &mut CenContext) {
         let descriptor_set_layout = Self::descriptor_set_layout(&ctx.gfx.device);
         let pipeline_config = Self::pipeline_config(descriptor_set_layout, self.file_path.as_ref().unwrap().to_str().unwrap(), self.code.clone());
@@ -274,10 +309,31 @@ impl App {
 
         self.last_compile = Some(Instant::now())
     }
+
+    fn watch_callback(tx: Sender<String>) -> impl FnMut(DebounceEventResult) {
+        move |event| match event {
+            Ok(events) => {
+                if let Some(e) = events
+                    .iter().find(|e| e.kind == Any)
+                {
+                    tx.send(e.path.to_str().unwrap().to_string()).expect("Failed to send on tx");
+                }
+            }
+            Err(e) => {
+                error!("{}", e);
+            }
+        }
+    }
+
 }
 
 impl RenderComponent for App {
     fn render(&mut self, ctx: &mut CenContext<'_>) {
+
+        while let Ok(shader) = self.shader_write_listener.try_recv() {
+            self.code = fs::read_to_string(self.file_path.as_ref().unwrap()).expect("Failed to read audio file");
+            self.update_shader(ctx);
+        }
 
         if self.compile {
             self.compile = false;
@@ -368,6 +424,7 @@ impl RenderComponent for App {
 
 impl GuiComponent for App {
     fn gui(&mut self, gui_handler: &mut GuiContext, ctx: &Context) {
+
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             menu::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
@@ -408,6 +465,9 @@ impl GuiComponent for App {
                         }
                     }
                 });
+                ui.menu_button("View", |ui| {
+                    ui.checkbox(&mut self.show_code, "Show code");
+                });
                 let label: String = if let Some(path) = &self.file_path {
                     path.to_str().unwrap().to_string()
                 } else { "Example".to_string() };
@@ -421,11 +481,40 @@ impl GuiComponent for App {
             0
         };
 
-        egui::SidePanel::left("scene_tree")
-            .resizable(true)
-            .default_width(520.0)
-            .min_width(80.0)
-            .show(ctx, |ui| {
+        if self.show_code {
+            egui::SidePanel::right("scene_tree")
+                .resizable(true)
+                .default_width(520.0)
+                .min_width(80.0)
+                .show(ctx, |ui| {
+                    let error_height = 200.0;
+                    let available = ui.available_height();
+
+                    egui::ScrollArea::vertical()
+                        .max_height(available - error_height)
+                        .show(ui, |ui| {
+                            CodeEditor::default()
+                                .id_source("code editor")
+                                .with_rows(12)
+                                .with_fontsize(14.0)
+                                .with_theme(ColorTheme::GITHUB_DARK)
+                                .with_syntax(self.syntax.clone())
+                                .with_numlines(true)
+                                .show_with_completer(ui, &mut self.code, &mut self.completer);
+                        });
+
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.shader_errors.clone().unwrap_or("".to_string()))
+                            .font(egui::TextStyle::Monospace)
+                            .code_editor()
+                            .desired_rows(20)
+                            .lock_focus(true)
+                            .desired_width(f32::INFINITY)
+                    );
+                });
+        }
+
+        egui::CentralPanel::default().show(ctx, |ui| {
                 self.plot.ui(gui_handler, ui, time_offset);
 
                 ui.horizontal(|ui| {
@@ -473,34 +562,20 @@ impl GuiComponent for App {
                     ui.add(Knob::new(&mut self.controls.c, 0f32..=1f32).text("opt[2]"));
                     ui.add(Knob::new(&mut self.controls.d, 0f32..=1f32).text("opt[3]"));
                 });
+
+                if !self.show_code {
+                    ui.separator();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.shader_errors.clone().unwrap_or("".to_string()))
+                            .font(egui::TextStyle::Monospace)
+                            .code_editor()
+                            .desired_rows(10)
+                            .lock_focus(true)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(999)
+                    );
+                }
             });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let error_height = 200.0;
-            let available = ui.available_height();
-
-            egui::ScrollArea::vertical()
-                .max_height(available - error_height)
-                .show(ui, |ui| {
-                    CodeEditor::default()
-                        .id_source("code editor")
-                        .with_rows(12)
-                        .with_fontsize(14.0)
-                        .with_theme(ColorTheme::GITHUB_DARK)
-                        .with_syntax(self.syntax.clone())
-                        .with_numlines(true)
-                        .show_with_completer(ui, &mut self.code, &mut self.completer);
-                });
-
-            ui.add(
-                egui::TextEdit::multiline(&mut self.shader_errors.clone().unwrap_or("".to_string()))
-                    .font(egui::TextStyle::Monospace)
-                    .code_editor()
-                    .desired_rows(10)
-                    .lock_focus(true)
-                    .desired_width(f32::INFINITY)
-            );
-        });
     }
 }
 

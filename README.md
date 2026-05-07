@@ -4,6 +4,7 @@
 A simple glsl audio editor.
 
 - In-app code editor
+- Shader hot reloading, you may also edit it externally
 - L/R audio preview
 - Open/save .glsl files
 - shader compilation with error log
