@@ -9,13 +9,14 @@ layout( push_constant ) uniform PushConstants
     float zoom;
     uint offset;
     uint current_sample;
+    uint channel;
 } constants;
 
 struct PixelData {
-    float minimum;
-    float maximum;
-    int direction;
-    int sample_index;
+    vec2[2] minmax;
+    ivec2 direction;
+    uint sample_index;
+    uint padding;
 };
 layout( std430, binding = 0 ) readonly buffer MinMaxBuffer {
     PixelData[] data;
@@ -42,8 +43,8 @@ void main()
     float x = 2. * gl_InstanceIndex / constants.pixels_x - 1.;
 
     PixelData minmax = minmax_data.data[gl_InstanceIndex];
-    float minimum = minmax.minimum;
-    float maximum = minmax.maximum;
+    float minimum = minmax.minmax[constants.channel][0];
+    float maximum = minmax.minmax[constants.channel][1];
 
     // Discard invalid samples
     if(maximum < minimum) return;
@@ -52,11 +53,11 @@ void main()
 
     // Shift x position in order to have aliased lines
     float x_offset = 0.;
-    if( minmax.direction == 1 ) {
+    if( minmax.direction[constants.channel] == 1 ) {
         // Upward line, move the top vertices right by half a pixel
         // Move the bottom pixel left by half a pixel
         x_offset = (vertex_p.y * 2. - 1.) * pixelwidth / 2.;
-    } else if (minmax.direction == 2) {
+    } else if (minmax.direction[constants.channel] == 2) {
         // Downward line, move the top vertices left by half a pixel
         // Move the bottom pixel right by half a pixel
         x_offset = -(vertex_p.y * 2. - 1.) * pixelwidth / 2.;

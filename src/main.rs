@@ -116,8 +116,8 @@ impl AppComponent for App {
 
         let controls = AudioControls {
             volume: 1.0,
-            a: 0.02,
-            b: 0.5,
+            a: 0.1,
+            b: 0.1,
             c: 1.0,
             d: 1.0,
             frequency: 0.15,

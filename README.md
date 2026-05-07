@@ -4,7 +4,7 @@
 A simple glsl audio editor.
 
 - In-app code editor
-- audio preview
+- L/R audio preview
 - Open/save .glsl files
 - shader compilation with error log
 - Ctrl + Enter to quick-compile
@@ -24,5 +24,4 @@ cargo run --release
 
 ## Planned features
 
-- Render both left and right audio channel
 - Longer audio sample generation

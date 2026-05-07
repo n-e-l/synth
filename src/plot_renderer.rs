@@ -41,7 +41,8 @@ struct PushConstants {
     pixels_y: u32,
     zoom: f32,
     offset: u32,
-    current_sample: usize
+    current_sample: u32,
+    channel: u32,
 }
 
 impl PlotRenderer {
@@ -178,7 +179,7 @@ impl PlotRenderer {
             &gfx.device,
             &mut gfx.allocator,
             MemoryLocation::GpuOnly,
-            (width as usize * size_of::<f32>() * 4) as DeviceSize, // Two floats (min, max) per pixel
+            (width as usize * size_of::<f32>() * 8) as DeviceSize, // Two floats (min, max) per pixel
             BufferUsageFlags::STORAGE_BUFFER | BufferUsageFlags::TRANSFER_DST | BufferUsageFlags::TRANSFER_SRC
         );
 
@@ -207,7 +208,8 @@ impl RenderComponent for PlotRenderer {
             pixels_y: image.height(),
             zoom: self.zoom,
             offset: self.sample_offset as u32,
-            current_sample: self.current_sample
+            current_sample: self.current_sample as u32,
+            channel: 0,
         };
         ctx.command_buffer.push_constants(
             minmax_pipeline,
@@ -296,14 +298,15 @@ impl RenderComponent for PlotRenderer {
             let background_pipeline = ctx.pipelines.get(self.background_pipeline).unwrap();
             ctx.command_buffer.bind_pipeline(background_pipeline);
 
-            let push_constants = PushConstants {
+            let mut push_constants = PushConstants {
                 samples_per_seconds: SAMPLES_PER_SECOND as u32,
                 total_samples: BUFFER_SAMPLES as u32,
                 pixels_x: image.width(),
                 pixels_y: image.height(),
                 zoom: self.zoom,
                 offset: self.sample_offset as u32,
-                current_sample: self.current_sample
+                current_sample: self.current_sample as u32,
+                channel: 0,
             };
             ctx.command_buffer.push_constants(
                 background_pipeline,
@@ -313,10 +316,34 @@ impl RenderComponent for PlotRenderer {
             );
             ctx.command_buffer.draw(6, 1, 0,  0);
 
-            // Graph
+            // Graph - channel 0
             let graph_pipeline = ctx.pipelines.get(self.graph_pipeline).unwrap();
             ctx.command_buffer.bind_pipeline(graph_pipeline);
 
+            ctx.command_buffer.push_constants(
+                graph_pipeline,
+                ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT,
+                0,
+                &bytemuck::cast_slice(std::slice::from_ref(&push_constants))
+            );
+
+            ctx.command_buffer.push_descriptor_set(
+                graph_pipeline,
+                0,
+                &[
+                    WriteDescriptorSet::default()
+                        .dst_binding(0)
+                        .dst_array_element(0)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&[self.gpu_handles.minmax_buffer.binding()]),
+                ]
+            );
+
+            // -1 to stop wrapping bug
+            ctx.command_buffer.draw(6, image.width() - 1, 0,  0);
+
+            // Graph - channel 1
+            push_constants.channel = 1;
             ctx.command_buffer.push_constants(
                 graph_pipeline,
                 ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT,
