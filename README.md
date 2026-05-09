@@ -1,7 +1,7 @@
 # Synth
 ![build](https://github.com/n-e-l/synth/actions/workflows/rust.yml/badge.svg)
 
-A simple glsl audio editor.
+A simple GLSL/Slang audio editor.
 
 - In-app code editor
 - Shader hot reloading, for editing with an external editor
